@@ -13,6 +13,10 @@ import { ReplaySystemView } from "./components/ReplaySystemView";
 import { ReportsView } from "./components/ReportsView";
 import { AlertsView } from "./components/AlertsView";
 import { SettingsView } from "./components/SettingsView";
+import { ImpactSimulatorView } from "./components/ImpactSimulatorView";
+import { LeakHistoryView } from "./components/LeakHistoryView";
+import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
+import type { AlertsSummary, SavingsSummary } from "./types";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
@@ -20,6 +24,8 @@ export default function App() {
   const [latestTelemetry, setLatestTelemetry] = useState<any>(null);
   const [telemetryHistory, setTelemetryHistory] = useState<any[]>([]);
   const [mode, setMode] = useState<"live" | "replay">("replay");
+  const [savings, setSavings] = useState<SavingsSummary | null>(null);
+  const [alertsSummary, setAlertsSummary] = useState<AlertsSummary | null>(null);
 
   // Fetch Health & Live Telemetry State
   const fetchState = () => {
@@ -46,11 +52,33 @@ export default function App() {
       .catch((err) => console.error(err));
   };
 
+  // Savings and the alert badge change on operator action, not per sample, so
+  // they poll far slower than telemetry.
+  const fetchImpactState = () => {
+    fetch("/api/savings")
+      .then((res) => res.json())
+      .then(setSavings)
+      .catch(() => undefined);
+
+    fetch("/api/alerts/summary")
+      .then((res) => res.json())
+      .then(setAlertsSummary)
+      .catch(() => undefined);
+  };
+
   useEffect(() => {
     fetchState();
     const interval = setInterval(fetchState, 1000); // 1Hz live telemetry polling
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    fetchImpactState();
+    const interval = setInterval(fetchImpactState, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const activeAlertCount = alertsSummary?.counts.active ?? 0;
 
   const handleToggleLeak = (action: "OPEN" | "CLOSE", size?: number) => {
     fetch("/api/leak/toggle", {
@@ -105,7 +133,7 @@ export default function App() {
       <Sidebar
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        unreadAlertsCount={3}
+        unreadAlertsCount={activeAlertCount}
       />
 
       {/* 2. Main Right Container */}
@@ -113,7 +141,7 @@ export default function App() {
         {/* Top Header */}
         <Header
           systemOnline={health?.status === "ok" || true}
-          unreadCount={3}
+          unreadCount={activeAlertCount}
           onOpenAlerts={() => setActiveTab("alerts")}
           mode={mode}
           onToggleMode={handleToggleMode}
@@ -121,6 +149,9 @@ export default function App() {
 
         {/* View Content Body */}
         <main className="flex-1 p-8 max-w-[1600px] w-full mx-auto">
+          {/* Keyed on the active tab so navigating away from a failed view clears
+              the error rather than stranding the operator on it. */}
+          <ViewErrorBoundary resetKey={activeTab}>
           {activeTab === "dashboard" && (
             <DashboardView
               latestTelemetry={latestTelemetry}
@@ -128,6 +159,9 @@ export default function App() {
               onNavigateTab={setActiveTab}
               onToggleLeak={handleToggleLeak}
               onTogglePump={handleTogglePump}
+              impact={latestTelemetry?.impact}
+              savings={savings}
+              onAnalyzeImpact={() => setActiveTab("impact-simulator")}
             />
           )}
 
@@ -149,6 +183,8 @@ export default function App() {
 
           {activeTab === "localization" && <LocalizationView />}
 
+          {activeTab === "impact-simulator" && <ImpactSimulatorView />}
+
           {activeTab === "replay" && <ReplaySystemView />}
 
           {activeTab === "analytics" && <AnalyticsView />}
@@ -161,7 +197,10 @@ export default function App() {
 
           {activeTab === "alerts" && <AlertsView />}
 
+          {activeTab === "leak-history" && <LeakHistoryView />}
+
           {activeTab === "settings" && <SettingsView />}
+          </ViewErrorBoundary>
         </main>
       </div>
     </div>

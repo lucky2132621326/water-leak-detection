@@ -24,6 +24,8 @@ import {
   Tooltip,
   CartesianGrid
 } from "recharts";
+import { ImpactSummaryStrip } from "./ImpactSummaryStrip";
+import type { ImpactSummary, SavingsSummary } from "../types";
 
 // Custom Pump Graphic matching screenshot
 const PumpGraphic = ({ label, isOn }: { label: string; isOn: boolean }) => (
@@ -108,6 +110,9 @@ interface DashboardViewProps {
   onNavigateTab: (tab: any) => void;
   onToggleLeak?: (action: "OPEN" | "CLOSE", size?: number) => void;
   onTogglePump?: (state: boolean) => void;
+  impact?: ImpactSummary | null;
+  savings?: SavingsSummary | null;
+  onAnalyzeImpact?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -115,7 +120,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   telemetryHistory = [],
   onNavigateTab,
   onToggleLeak,
-  onTogglePump
+  onTogglePump,
+  impact,
+  savings,
+  onAnalyzeImpact
 }) => {
   // Live values matching screenshot defaults if available, otherwise fallback
   const qIn = latestTelemetry?.latest?.q_in ?? 12.45;
@@ -210,6 +218,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 1b. Impact strip — translates the current leak rate into litres, rupees
+             and a severity category, plus the cumulative savings KPI. */}
+      <ImpactSummaryStrip impact={impact} savings={savings} onAnalyzeImpact={onAnalyzeImpact} />
 
       {/* 2. Middle Grid: System Overview (65%) & Active Exp + Detector Status (35%) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

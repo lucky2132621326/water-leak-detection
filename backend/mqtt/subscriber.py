@@ -18,6 +18,7 @@ from backend.repositories.telemetry_repository import TelemetryRepository
 from backend.repositories.detection_repository import DetectionRepository
 from backend.pipeline import DetectionPipeline
 from backend.response.response_builder import build_response
+from backend.alerts.alert_service import get_alert_service
 from backend.utils.logger import logger
 
 
@@ -60,6 +61,8 @@ class LiveTelemetryIngestor:
 
         self.telemetry_repo.save_sample(dto, run_id=None, extra={"pressure_bar": result["pressure"]["pressure_bar"]})
         self.detection_repo.save_response(response, run_id=None)
+        # Roll this sample into the operator-facing incident list (Alert Center).
+        get_alert_service().ingest(response, source="live", run_id=None)
 
 
 def _on_connect(client, userdata, flags, rc):

@@ -34,11 +34,30 @@ This installs Express, React 19, Recharts, Lucide React, Vite, Tailwind CSS, mot
 
 ### Step 2: Install Python Backend Dependencies
 
-Install the required Python packages using `requirements.txt`:
+Create a virtual environment first. This is **required**, not optional: modern
+Homebrew/Debian Python installs are PEP 668 "externally managed" and will refuse
+a bare `pip install` with an `externally-managed-environment` error.
+
+```bash
+python3 -m venv .venv
+```
+
+Activate it (do this in every new terminal you run backend commands from):
+
+```bash
+source .venv/bin/activate
+```
+
+Then install the required Python packages:
 
 ```bash
 pip install -r requirements.txt
 ```
+
+> Activating the venv is also what makes the bare `python` command in this
+> README resolve — macOS ships `python3` only, so an unactivated shell fails
+> with `command not found: python`. On Windows the activate command is
+> `.venv\Scripts\activate`.
 
 *Required Python libraries installed:*
 * `pyyaml`: Configuration parsing
@@ -46,6 +65,59 @@ pip install -r requirements.txt
 * `pymongo`: Database operations
 * `pydantic`: DTO schema validation
 * `numpy` / `scipy`: Numerical processing & analytics
+* `fastapi` / `uvicorn`: Detection API service (`backend/api_server.py`)
+* `openai`: Azure OpenAI work-order summaries (optional — falls back to
+  deterministic templates when `AZURE_OPENAI_API_KEY` is unset)
+
+> **No additional packages are needed for the impact analysis, Alert Center or
+> automatic experiment reports.** Those were built deliberately dependency-free:
+> reports render as printable HTML with hand-rolled inline SVG charts rather than
+> pulling in a PDF/plotting toolchain, so `requirements.txt` is unchanged.
+
+---
+
+## 🚀 Quick Start (Replay Mode — no hardware required)
+
+The dashboard needs **two processes**: the Python detection API on port `8000`
+and the Express/Vite web server on port `3000`. Express is only a thin proxy —
+if the Python service isn't running, every view returns
+`502 Detection backend unreachable` and renders empty.
+
+Make sure MongoDB is running first (`brew services start mongodb-community` on
+macOS), and that your virtual environment is activated (`source .venv/bin/activate`
+— see Step 2), then:
+
+**Step 1 — seed a replay run** (300 telemetry samples with a ground-truth leak
+window, so Replay mode has real data before any hardware exists):
+
+```bash
+python -m backend.replay.seed_runs
+```
+
+**Step 2 — start the detection API** (terminal 1):
+
+```bash
+python -m uvicorn backend.api_server:app --host 127.0.0.1 --port 8000 --reload
+```
+
+**Step 3 — start the dashboard** (terminal 2):
+
+```bash
+npm run dev
+```
+
+Open **http://localhost:3000**. The system defaults to Replay mode and loops the
+seeded run through the real detection pipeline, so leak alerts, severity and
+cost impact appear on their own roughly every 75 seconds.
+
+> **Run both commands from the repository root.** `config_loader.py` resolves
+> `backend/config/*.yaml` by relative path, so launching uvicorn from inside
+> `backend/` silently falls back to hardcoded defaults instead of your YAML.
+
+> **Live mode requires an MQTT broker** on port `1883`
+> (`brew install mosquitto && brew services start mosquitto`). Without it the
+> backend logs a single startup warning and Replay mode works normally — this is
+> not a failure. Live and Replay run through the identical `DetectionPipeline`.
 
 ---
 
@@ -79,19 +151,36 @@ python tests/test_pump.py
 
 ---
 
-### 3. Start Development Web Workbench (Full-Stack Express + Vite)
+### 3. Backend Logic Test Suites
 
-To run the interactive live dashboard and backend proxy server:
+Unit tests for the detection and impact logic (these need no hardware; the
+alert tests need no MongoDB either):
+
+```bash
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+Covers the 3-sigma mass balance detector, the impact arithmetic (water loss,
+cost, severity bands, progression) and the alert lifecycle (incident merging,
+replay idempotency, savings crediting, query filters).
+
+---
+
+### 4. Start Development Web Workbench (Full-Stack Express + Vite)
+
+Serves the React dashboard and proxies `/api/*` to the Python detection service:
 
 ```bash
 npm run dev
 ```
 
 * Access the live dashboard at: `http://localhost:3000`
+* **Requires `backend.api_server` running on port `8000`** — see Quick Start
+  above. Express does not evaluate telemetry itself; it forwards every API call.
 
 ---
 
-### 4. Build for Production
+### 5. Build for Production
 
 To compile the React client assets and bundle `server.ts` into a standalone CommonJS bundle (`dist/server.cjs`):
 
@@ -101,7 +190,7 @@ npm run build
 
 ---
 
-### 5. Start Production Server
+### 6. Start Production Server
 
 Launch the compiled production bundle:
 

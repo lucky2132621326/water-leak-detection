@@ -95,3 +95,53 @@ class ThresholdsLoader:
         return val
 
 thresholds_loader = ThresholdsLoader()
+
+
+class ImpactLoader:
+    """Loads backend/config/impact.yaml (water tariff, severity bands, relatable
+    equivalents). Separate from thresholds.yaml because these are operator/utility
+    business inputs, not detector tuning knobs."""
+    _instance = None
+    _impact = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ImpactLoader, cls).__new__(cls)
+            cls._instance.load()
+        return cls._instance
+
+    def load(self, filepath: str = "backend/config/impact.yaml"):
+        try:
+            with open(filepath, 'r') as f:
+                self._impact = yaml.safe_load(f)
+                logger.info(f"Loaded impact configuration from {filepath}")
+        except Exception as e:
+            logger.error(f"Error loading {filepath}: {e}, using built-in defaults")
+            self._impact = self.get_defaults()
+
+    @staticmethod
+    def get_defaults():
+        return {
+            "tariff": {"currency_symbol": "₹", "rate_per_kilolitre": 20.0},
+            "severity_bands": [
+                {"max_lpm": 0.2, "label": "MINOR"},
+                {"max_lpm": 0.5, "label": "MODERATE"},
+                {"max_lpm": 1.0, "label": "MAJOR"},
+            ],
+            "critical_label": "CRITICAL",
+            "equivalents": {"tank_litres": 200, "person_daily_litres": 135, "bucket_litres": 20},
+            "recommendation": {"immediate_lpm": 1.0, "urgent_lpm": 0.5, "scheduled_lpm": 0.2},
+            "progression": {"delay_options_days": [1, 7, 30, 90, 365], "default_delay_days": 30},
+        }
+
+    def get(self, key_path: str, default=None):
+        keys = key_path.split(".")
+        val = self._impact
+        for k in keys:
+            if isinstance(val, dict) and k in val:
+                val = val[k]
+            else:
+                return default
+        return val
+
+impact_loader = ImpactLoader()

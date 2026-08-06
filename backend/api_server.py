@@ -13,6 +13,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from backend.mqtt.subscriber import LiveTelemetryIngestor, run_subscriber
@@ -23,6 +24,11 @@ from backend.repositories.detection_repository import LeakEventRepository, WorkO
 from backend.replay.replay_runner import ReplayRunner
 from backend.scheduler.cp_sat_scheduler import CPSatWorkOrderScheduler
 from backend.localization.localization_service import LocalizationService
+from backend.alerts.alert_service import get_alert_service
+from backend.impact.impact_service import ImpactService, analyze_impact
+from backend.impact.severity import SeverityClassifier
+from backend.reports.experiment_report import ExperimentReportGenerator
+from backend.config.config_loader import impact_loader
 from backend.utils.logger import logger
 
 app = FastAPI(title="Water Leak Detection API")
@@ -70,6 +76,7 @@ class ReplayPlayer:
                     servo_state_deg=actuators.get("servo_deg", 0), pressure_bar=doc.get("pressure_bar"),
                 )
                 response = build_response(result)
+                get_alert_service().ingest(response, source="replay", run_id=self.current_run_id)
                 self.latest_response = response
                 self.latest_telemetry = doc
                 self.history.append(doc)
@@ -88,6 +95,29 @@ _mode = "replay"  # default to replay so the dashboard has data before the rig c
 _live_ingestor = LiveTelemetryIngestor()
 _replay_player = ReplayPlayer()
 _mqtt_client = None
+
+# Impact analysis and the alert store are stateless-ish singletons; built lazily
+# so importing this module never requires MongoDB to be reachable.
+_impact_singleton = None
+_report_generator = None
+
+
+def _alerts():
+    return get_alert_service()
+
+
+def _impact_service() -> ImpactService:
+    global _impact_singleton
+    if _impact_singleton is None:
+        _impact_singleton = ImpactService()
+    return _impact_singleton
+
+
+def _reports() -> ExperimentReportGenerator:
+    global _report_generator
+    if _report_generator is None:
+        _report_generator = ExperimentReportGenerator()
+    return _report_generator
 
 
 @app.on_event("startup")
@@ -165,12 +195,21 @@ def _flatten_telemetry(raw: dict, response: Optional[dict], mode: str) -> Option
 def get_telemetry():
     source = _live_ingestor if _mode == "live" else _replay_player
     flat = _flatten_telemetry(source.latest_telemetry, source.latest_response, _mode)
+    response = source.latest_response
+
+    # The residual IS the estimated leak rate — water entering the zone that
+    # never left it. Attaching its impact summary here means every view reading
+    # /api/telemetry shows the same severity/loss figures as the Alert Center.
+    leak_rate = _alerts().leak_rate_from(response) if (response and response.get("is_alarm")) else 0.0
+
     return {
         "mode": _mode,
         "latest": flat,
         "pump_on": flat["pump_on"] if flat else True,
         "leak_active": flat["leak_active"] if flat else False,
-        "evaluation": source.latest_response,
+        "evaluation": response,
+        "leak_rate_lpm": round(leak_rate, 3),
+        "impact": _impact_service().summarize(leak_rate),
     }
 
 
@@ -238,13 +277,165 @@ def list_work_orders():
 @app.post("/api/work-orders/dispatch")
 def dispatch_work_order(body: dict):
     scheduler = CPSatWorkOrderScheduler()
-    leak = {
-        "id": body.get("leak_event_id", int(time.time())),
-        "location_node": body.get("location", "Branch_A"),
-        "severity_lpm": float(body.get("severity", 1.25)),
-    }
-    work_orders = scheduler.optimize_schedule([leak])
+
+    # A work order can be raised straight from an Alert Center incident, in
+    # which case the severity comes from the incident's peak observed rate
+    # rather than an operator retyping it.
+    alert_id = body.get("alert_id")
+    alert = _alerts().get(alert_id) if alert_id else None
+    if alert:
+        location = alert["zone"]
+        severity = alert["peak_leak_rate_lpm"]
+        leak_event_id = alert["alert_id"]
+    else:
+        location = body.get("location", "Branch_A")
+        severity = float(body.get("severity", 1.25))
+        leak_event_id = body.get("leak_event_id", int(time.time()))
+
+    work_orders = scheduler.optimize_schedule([{
+        "id": leak_event_id, "location_node": location, "severity_lpm": severity,
+    }])
     wo = work_orders[0]
     wo["id"] = wo.pop("work_order_id")
+    wo["alert_id"] = alert_id
+    wo["impact"] = _impact_service().summarize(severity)
     WorkOrderRepository().insert(wo)
+    # insert() lets Mongo stamp an ObjectId onto the dict, which is not
+    # JSON-serializable — drop it before returning.
+    wo.pop("_id", None)
     return {"success": True, "work_order": wo}
+
+
+# --- Impact analysis --------------------------------------------------------
+
+@app.get("/api/impact/config")
+def impact_config():
+    """Tariff, severity bands and simulator options — lets the frontend render
+    the controls without hardcoding values the backend owns."""
+    classifier = SeverityClassifier()
+    return {
+        "currency_symbol": impact_loader.get("tariff.currency_symbol", "₹"),
+        "rate_per_kilolitre": impact_loader.get("tariff.rate_per_kilolitre", 20.0),
+        "severity_bands": classifier.describe_bands(),
+        "delay_options_days": impact_loader.get("progression.delay_options_days", [1, 7, 30, 90, 365]),
+        "default_delay_days": impact_loader.get("progression.default_delay_days", 30),
+        "equivalents": impact_loader.get("equivalents", {}),
+    }
+
+
+@app.get("/api/impact/current")
+def impact_current():
+    """Impact of whatever the detector is seeing right now — this is what the
+    dashboard's 'Analyze Impact' button pre-fills the simulator from."""
+    source = _live_ingestor if _mode == "live" else _replay_player
+    resp = source.latest_response
+    rate = _alerts().leak_rate_from(resp) if (resp and resp.get("is_alarm")) else 0.0
+    return {
+        "leak_detected": bool(resp and resp.get("is_alarm")),
+        "zone": (resp or {}).get("zone", "NONE"),
+        "confidence_tier": (resp or {}).get("confidence_tier", "NONE"),
+        "likelihood_score": (resp or {}).get("likelihood_score", 0.0),
+        "analysis": analyze_impact(rate),
+    }
+
+
+@app.post("/api/impact/simulate")
+def impact_simulate(body: dict):
+    """The interactive 'what if we ignore it?' simulator. Every parameter is
+    optional and falls back to the configured default."""
+    try:
+        rate = float(body.get("leak_rate_lpm", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return {"error": "leak_rate_lpm must be a number"}
+
+    delay = body.get("repair_delay_days")
+    tariff = body.get("tariff_per_kl")
+    try:
+        delay = float(delay) if delay is not None else None
+        tariff = float(tariff) if tariff is not None else None
+    except (TypeError, ValueError):
+        return {"error": "repair_delay_days and tariff_per_kl must be numbers"}
+
+    if tariff is not None and tariff <= 0:
+        return {"error": "tariff_per_kl must be greater than zero"}
+
+    return analyze_impact(rate, repair_delay_days=delay, tariff_per_kl=tariff)
+
+
+# --- Alert Center -----------------------------------------------------------
+
+def _parse_float(value):
+    try:
+        return float(value) if value not in (None, "", "ALL") else None
+    except (TypeError, ValueError):
+        return None
+
+
+@app.get("/api/alerts")
+def list_alerts(status: Optional[str] = None, zone: Optional[str] = None,
+                severity: Optional[str] = None, min_confidence: Optional[str] = None,
+                since_ts: Optional[str] = None, until_ts: Optional[str] = None,
+                search: Optional[str] = None, limit: int = 200):
+    return _alerts().query(
+        status=status, zone=zone, severity=severity,
+        min_confidence=_parse_float(min_confidence),
+        since_ts=_parse_float(since_ts), until_ts=_parse_float(until_ts),
+        search=search, limit=limit,
+    )
+
+
+@app.get("/api/alerts/summary")
+def alerts_summary():
+    svc = _alerts()
+    return {"counts": svc.counts(), "zones": svc.zones(), "timeline": svc.timeline()}
+
+
+@app.post("/api/alerts/{alert_id}/resolve")
+def resolve_alert(alert_id: str, body: dict = None):
+    alert = _alerts().resolve(alert_id, note=(body or {}).get("note", ""))
+    if not alert:
+        return {"success": False, "error": f"Unknown alert '{alert_id}'"}
+    return {"success": True, "alert": alert, "savings": _alerts().savings()}
+
+
+@app.post("/api/alerts/{alert_id}/false-positive")
+def false_positive_alert(alert_id: str, body: dict = None):
+    alert = _alerts().mark_false_positive(alert_id, note=(body or {}).get("note", ""))
+    if not alert:
+        return {"success": False, "error": f"Unknown alert '{alert_id}'"}
+    return {"success": True, "alert": alert, "savings": _alerts().savings()}
+
+
+@app.post("/api/alerts/{alert_id}/reopen")
+def reopen_alert(alert_id: str):
+    alert = _alerts().reopen(alert_id)
+    if not alert:
+        return {"success": False, "error": f"Unknown alert '{alert_id}'"}
+    return {"success": True, "alert": alert, "savings": _alerts().savings()}
+
+
+@app.get("/api/savings")
+def savings():
+    """Water Savings Counter — the utility-KPI view of what repairs achieved."""
+    return _alerts().savings()
+
+
+# --- Automatic experiment reports -------------------------------------------
+
+@app.get("/api/reports/experiment/{run_id}")
+def experiment_report(run_id: str):
+    return _reports().build(run_id)
+
+
+@app.get("/api/reports/experiment/{run_id}/html", response_class=HTMLResponse)
+def experiment_report_html(run_id: str):
+    """Standalone printable report. The browser's Save-as-PDF turns this into
+    the PDF deliverable without pulling in a PDF toolchain."""
+    generator = _reports()
+    report = generator.build(run_id)
+    body = generator.render_html(report)
+    return HTMLResponse(
+        f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<title>Experiment Report — {run_id}</title></head><body>{body}</body></html>"
+    )
