@@ -3,6 +3,7 @@ import { Clock, Bell, ChevronDown } from "lucide-react";
 
 interface HeaderProps {
   systemOnline?: boolean;
+  systemLabel?: string;
   unreadCount?: number;
   onOpenAlerts?: () => void;
   mode?: "live" | "replay";
@@ -11,6 +12,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   systemOnline = true,
+  systemLabel,
   unreadCount = 3,
   onOpenAlerts,
   mode = "replay",
@@ -57,7 +59,7 @@ export const Header: React.FC<HeaderProps> = ({
             : "bg-rose-50 text-rose-700 border border-rose-200/80"
         }`}>
           <span className={`w-2 h-2 rounded-full ${systemOnline ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
-          <span>{systemOnline ? "System Online" : "System Offline"}</span>
+          <span>{systemLabel || (systemOnline ? "System Online" : "System Offline")}</span>
         </div>
       </div>
 
@@ -79,11 +81,11 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        {/* Real-time Clock Display matching screenshot: "10:24:38 AM | May 24, 2025" */}
+        {/* Real-time local clock */}
         <div className="flex items-center space-x-2 text-slate-600 bg-slate-50 border border-slate-200/60 rounded-xl px-3.5 py-1.5 text-xs font-medium">
           <Clock className="w-4 h-4 text-slate-500" />
           <span>
-            {timeStr || "10:24:38 AM"} <span className="text-slate-400 mx-1">|</span> {dateStr || "May 24, 2025"}
+            {timeStr || "--:--:--"} <span className="text-slate-400 mx-1">|</span> {dateStr || "--- --, ----"}
           </span>
         </div>
 

@@ -11,6 +11,8 @@ from backend.fusion.fusion_engine import FusionEngine
 from backend.fusion.confidence_engine import ConfidenceEngine
 from backend.localization.localization_service import LocalizationService
 from backend.utils.pressure_estimate import estimate_pressure_bar
+from backend.config.config_loader import config_loader
+from backend.calibration.calibration_repository import CalibrationRepository
 
 
 class DetectionPipeline:
@@ -23,9 +25,17 @@ class DetectionPipeline:
 
     def process_sample(self, ts, q_in, q_out, q_branch, current_ma, voltage_v=12.0,
                         pump_on=True, servo_state_deg=0, pressure_bar=None):
-        residual = q_in - (q_out + q_branch)
+        topology = config_loader.get("hydraulics.topology", "recombined_branch")
+        bias_lpm = CalibrationRepository().get_bias()
+        balance_q_branch = q_branch if topology == "metered_outflow" else 0.0
+        balance_q_in = q_in - bias_lpm
+        residual = balance_q_in - (q_out + balance_q_branch)
 
-        detector_results = self.detector_manager.process_sample(ts, q_in, q_out, q_branch, current_ma, voltage_v)
+        detector_results = self.detector_manager.process_sample(
+            ts, q_in, q_out, q_branch, current_ma, voltage_v,
+            balance_q_in=balance_q_in,
+            balance_q_branch=balance_q_branch,
+        )
         fusion_result = self.fusion_engine.fuse(detector_results)
         confidence_tier = ConfidenceEngine.evaluate(fusion_result["fused_score"], len(fusion_result["active_methods"]))
         state_result = self.state_machine.update(fusion_result["is_alarm"], residual)
@@ -36,6 +46,7 @@ class DetectionPipeline:
             localization = self.localization_service.localize_leak(residual, q_branch, servo_state_deg)
         else:
             self.alarm_onset_ts = None
+            self.localization_service.observe_baseline(q_branch)
             localization = {"zone": "NONE", "confidence": "NONE"}
 
         if pressure_bar is not None:
@@ -53,5 +64,10 @@ class DetectionPipeline:
             "state": state_result,
             "localization": localization,
             "alarm_onset_ts": self.alarm_onset_ts,
-            "pressure": pressure
+            "pressure": pressure,
+            "hydraulics": {
+                "topology": topology,
+                "zero_leak_bias_lpm": bias_lpm,
+                "branch_in_mass_balance": topology == "metered_outflow",
+            }
         }

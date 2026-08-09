@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Preferences.h>
 #include "config.h"
 #include "flow_sensor.h"
 #include "ina219.h"
@@ -11,25 +12,29 @@ FlowSensor flowOut(PIN_FLOW_OUT, K_FACTOR_FLOW_OUT);
 FlowSensor flowBranch(PIN_FLOW_BRANCH, K_FACTOR_FLOW_BRANCH);
 INA219Sensor powerMeter;
 MQTTHandler mqtt;
-RelayController pumpRelay(PIN_RELAY_PUMP);
-RelayController leakRelay(PIN_RELAY_LEAK);
-ServoController leakServo(PIN_SERVO_LEAK);
+RelayController pump1Relay(PIN_RELAY_PUMP);
+RelayController pump2Relay(PIN_RELAY_PUMP2);
+ServoController branchServo(PIN_SERVO_LEAK);
+Preferences calibrationPreferences;
 
 unsigned long lastTelemetryTime = 0;
 unsigned long lastStatusTime = 0;
+unsigned long lastCommandTime = 0;
+unsigned long pump1StartedAt = 0;
+unsigned long pump2StartedAt = 0;
+uint32_t telemetrySequence = 0;
 
-// Handles SET_VALVE commands received on rig/cmd. This only actuates the
-// diagnostic leak-injection valve used to seed synthetic leak events for
-// validation — it is not exposed to end users as an operational control.
-void handleValveCommand(const char* valveId, bool open) {
-    Serial.printf("[CMD] SET_VALVE %s -> %s\n", valveId, open ? "OPEN" : "CLOSE");
-    if (open) {
-        leakRelay.on();
-        leakServo.setAngle(45);
-    } else {
-        leakRelay.off();
-        leakServo.setAngle(0);
-    }
+void handleRigCommand(bool pump1, bool pump2, int servoDeg) {
+    const unsigned long now = millis();
+    lastCommandTime = now;
+
+    if (pump1 && !pump1Relay.getState()) pump1StartedAt = now;
+    if (pump2 && !pump2Relay.getState()) pump2StartedAt = now;
+    pump1 ? pump1Relay.on() : pump1Relay.off();
+    pump2 ? pump2Relay.on() : pump2Relay.off();
+    branchServo.setAngle(servoDeg);
+
+    Serial.printf("[CMD] P1=%d P2=%d servo=%d\n", pump1, pump2, branchServo.getAngle());
 }
 
 void setup() {
@@ -40,36 +45,58 @@ void setup() {
     flowOut.begin();
     flowBranch.begin();
     powerMeter.begin();
-    pumpRelay.begin();
-    leakRelay.begin();
-    leakServo.begin();
+    pump1Relay.begin();
+    pump2Relay.begin();
+    branchServo.begin();
 
-    pumpRelay.on(); // Turn pump ON by default
+    calibrationPreferences.begin("flow-cal", false);
+    flowIn.setKFactor(calibrationPreferences.getFloat("k1", K_FACTOR_FLOW_IN));
+    flowOut.setKFactor(calibrationPreferences.getFloat("k2", K_FACTOR_FLOW_OUT));
+    flowBranch.setKFactor(calibrationPreferences.getFloat("k3", K_FACTOR_FLOW_BRANCH));
+
+    // Active-low relays must stay OFF until a complete supervised command.
+    pump1Relay.off();
+    pump2Relay.off();
+
     mqtt.connectWiFi(WIFI_SSID, WIFI_PASS);
     mqtt.connectMQTT(MQTT_BROKER, MQTT_PORT, DEVICE_ID);
-    mqtt.setCommandCallback(handleValveCommand);
+    mqtt.setCommandCallback(handleRigCommand);
 
-    Serial.println("[ESP32] System initialization complete. Telemetry active.");
+    Serial.println("[ESP32] Sensor node initialized. Awaiting supervised rig command.");
 }
 
 void loop() {
     mqtt.loop();
 
-    unsigned long now = millis();
+    const unsigned long now = millis();
+    const bool commandTimedOut = now - lastCommandTime > COMMAND_WATCHDOG_MS;
+    const bool pump1RuntimeExceeded = pump1Relay.getState() && now - pump1StartedAt > MAX_CONTINUOUS_PUMP_RUNTIME_MS;
+    const bool pump2RuntimeExceeded = pump2Relay.getState() && now - pump2StartedAt > MAX_CONTINUOUS_PUMP_RUNTIME_MS;
+    if ((commandTimedOut && (pump1Relay.getState() || pump2Relay.getState())) ||
+        pump1RuntimeExceeded || pump2RuntimeExceeded) {
+        pump1Relay.off();
+        pump2Relay.off();
+        Serial.println("[SAFETY] Pumps OFF: watchdog/runtime interlock");
+    }
+
     if (now - lastTelemetryTime >= 1000) {
         lastTelemetryTime = now;
 
-        float qIn = flowIn.readFlowLPM();
-        float qOut = flowOut.readFlowLPM();
-        float qBranch = flowBranch.readFlowLPM();
-        float currentMA = powerMeter.readCurrentMA();
-        float voltageV = powerMeter.readVoltageV();
+        const float qIn = flowIn.readFlowLPM();
+        const float qOut = flowOut.readFlowLPM();
+        const float qBranch = flowBranch.readFlowLPM();
+        const float currentMA = powerMeter.readCurrentMA();
+        const float voltageV = powerMeter.readVoltageV();
 
-        time_t epoch = time(nullptr);
-        unsigned long ts = (epoch > 1700000000) ? (unsigned long)epoch : (now / 1000);
+        const time_t epoch = time(nullptr);
+        const unsigned long ts = (epoch > 1700000000) ? (unsigned long)epoch : (now / 1000);
 
-        mqtt.publishTelemetry(ts, qIn, qOut, qBranch, currentMA, voltageV,
-                               flowIn.getTotalPulses(), flowOut.getTotalPulses(), leakRelay.getState());
+        mqtt.publishTelemetry(
+            ts, telemetrySequence++, qIn, qOut, qBranch, currentMA, voltageV,
+            flowIn.getTotalPulses(), flowOut.getTotalPulses(), flowBranch.getTotalPulses(),
+            pump1Relay.getState(), pump2Relay.getState(), branchServo.getAngle(),
+            now / 1000, WiFi.RSSI(), ESP.getFreeHeap()
+        );
     }
 
     if (now - lastStatusTime >= 10000) {

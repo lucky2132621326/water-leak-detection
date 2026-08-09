@@ -1,13 +1,24 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 
-const FASTAPI_BASE_URL = process.env.FASTAPI_BASE_URL || "http://localhost:8000";
+const FASTAPI_BASE_URL = process.env.FASTAPI_BASE_URL || "http://localhost:8001";
+const WORKSPACE_ROOT = path.resolve(process.cwd());
+const SENSITIVE_FILENAMES = new Set([".env", "secrets.h"]);
+
+function resolveInsideWorkspace(relativePath: string) {
+  const resolved = path.resolve(WORKSPACE_ROOT, relativePath);
+  const relative = path.relative(WORKSPACE_ROOT, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  if (SENSITIVE_FILENAMES.has(path.basename(resolved)) || path.basename(resolved).startsWith(".env")) return null;
+  return resolved;
+}
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
 
   app.use(express.json());
 
@@ -17,7 +28,11 @@ async function startServer() {
   async function proxyToFastApi(req: express.Request, res: express.Response, fastApiPath: string) {
     try {
       const url = `${FASTAPI_BASE_URL}${fastApiPath}`;
-      const init: RequestInit = { method: req.method, headers: { "Content-Type": "application/json" } };
+      const init: RequestInit = {
+        method: req.method,
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(4000),
+      };
       if (req.method !== "GET" && req.method !== "HEAD") {
         init.body = JSON.stringify(req.body ?? {});
       }
@@ -25,7 +40,11 @@ async function startServer() {
       const data = await upstream.json();
       res.status(upstream.status).json(data);
     } catch (e) {
-      res.status(502).json({ status: "error", result: `Detection backend unreachable: ${String(e)}` });
+      res.status(502).json({
+        status: "error",
+        code: "DETECTION_BACKEND_UNAVAILABLE",
+        message: "The detection service did not respond within four seconds.",
+      });
     }
   }
 
@@ -33,9 +52,13 @@ async function startServer() {
     { method: "get", path: "/api/health" },
     { method: "get", path: "/api/mode" },
     { method: "post", path: "/api/mode" },
+    { method: "get", path: "/api/calibration" },
+    { method: "post", path: "/api/calibration" },
+    { method: "get", path: "/api/ground-truth/status" },
+    { method: "post", path: "/api/ground-truth/start" },
+    { method: "post", path: "/api/ground-truth/stop" },
     { method: "get", path: "/api/telemetry" },
     { method: "get", path: "/api/telemetry/history" },
-    { method: "post", path: "/api/leak/toggle" },
     { method: "get", path: "/api/replay/runs" },
     { method: "post", path: "/api/replay/evaluate" },
     { method: "get", path: "/api/localization/current" },
@@ -77,10 +100,10 @@ async function startServer() {
   });
 
   app.get("/api/docs/:filename", (req, res) => {
-    const filename = req.params.filename;
-    const filePath = path.join(process.cwd(), "docs", filename);
+    const filename = path.basename(req.params.filename);
+    const filePath = filename.endsWith(".md") ? resolveInsideWorkspace(path.join("docs", filename)) : null;
     try {
-      if (fs.existsSync(filePath)) {
+      if (filePath && fs.existsSync(filePath)) {
         const content = fs.readFileSync(filePath, "utf-8");
         res.json({ filename, content });
       } else {
@@ -92,10 +115,11 @@ async function startServer() {
   });
 
   app.post("/api/docs/:filename", (req, res) => {
-    const filename = req.params.filename;
+    const filename = path.basename(req.params.filename);
     const { content } = req.body;
-    const filePath = path.join(process.cwd(), "docs", filename);
+    const filePath = filename.endsWith(".md") ? resolveInsideWorkspace(path.join("docs", filename)) : null;
     try {
+      if (!filePath || typeof content !== "string") return res.status(400).json({ error: "Valid Markdown filename and content required" });
       fs.writeFileSync(filePath, content, "utf-8");
       res.json({ success: true, filename });
     } catch (e) {
@@ -110,6 +134,7 @@ async function startServer() {
       const items: any[] = [];
       for (const entry of entries) {
         if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue;
+        if (SENSITIVE_FILENAMES.has(entry.name) || entry.name.startsWith(".env")) continue;
         const relPath = path.join(baseRelative, entry.name);
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
@@ -141,9 +166,9 @@ async function startServer() {
   app.get("/api/files/content", (req, res) => {
     const relativePath = req.query.path as string;
     if (!relativePath) return res.status(400).json({ error: "Path required" });
-    const fullPath = path.join(process.cwd(), relativePath);
+    const fullPath = resolveInsideWorkspace(relativePath);
     try {
-      if (fs.existsSync(fullPath)) {
+      if (fullPath && fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
         const content = fs.readFileSync(fullPath, "utf-8");
         res.json({ path: relativePath, content });
       } else {

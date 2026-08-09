@@ -4,12 +4,11 @@ Calculates flow differential residual Delta Q = Q_in - (Q_out + Q_branch)
 and evaluates 3-sigma dynamic thresholding.
 """
 
-import numpy as np
-
 class MassBalanceDetector:
-    def __init__(self, sigma_threshold=3.0, persistence_count=5):
+    def __init__(self, sigma_threshold=3.0, persistence_count=5, baseline_sigma=0.03):
         self.sigma_threshold = sigma_threshold
         self.persistence_count = persistence_count
+        self.baseline_sigma = baseline_sigma
         self.history = []
         self.consecutive_triggers = 0
 
@@ -22,9 +21,9 @@ class MassBalanceDetector:
         # np.mean/np.std return numpy.float64; comparing against them yields
         # numpy.bool_, which json/FastAPI can't serialize (silently breaks the
         # API response) — cast everything back to native Python types here.
-        mean = float(np.mean(self.history)) if len(self.history) >= 10 else 0.0
-        std = float(np.std(self.history)) if len(self.history) >= 10 else 0.05
-        threshold = mean + max(self.sigma_threshold * std, 0.20)
+        # The commissioning zero-leak run is authoritative. Do not let an
+        # active leak inflate its own adaptive threshold and hide persistence.
+        threshold = max(self.sigma_threshold * self.baseline_sigma, 0.05)
 
         is_anomaly = bool(abs(residual) > threshold)
         if is_anomaly:

@@ -24,6 +24,22 @@ import {
   Tooltip,
   CartesianGrid
 } from "recharts";
+import type { SystemHealth, TelemetryEnvelope, TelemetrySample } from "../types";
+
+const formatUptime = (seconds?: number | null) => {
+  if (seconds == null) return "Awaiting device status";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${days ? `${days}d ` : ""}${hours}h ${minutes}m uptime`;
+};
+
+const formatSampleTime = (ts?: number | null) => {
+  if (!ts) return "No sample received";
+  return new Date(ts * 1000).toLocaleString([], {
+    month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit"
+  });
+};
 
 // Custom Pump Graphic matching screenshot
 const PumpGraphic = ({ label, isOn }: { label: string; isOn: boolean }) => (
@@ -103,30 +119,46 @@ const GreenBranchValveGraphic = ({ value }: { value: string }) => (
 );
 
 interface DashboardViewProps {
-  latestTelemetry?: any;
-  telemetryHistory?: any[];
+  health?: SystemHealth | null;
+  mode: "live" | "replay";
+  latestTelemetry?: TelemetryEnvelope | null;
+  telemetryHistory?: TelemetrySample[];
   onNavigateTab: (tab: any) => void;
-  onToggleLeak?: (action: "OPEN" | "CLOSE", size?: number) => void;
-  onTogglePump?: (state: boolean) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
+  health,
+  mode,
   latestTelemetry,
   telemetryHistory = [],
   onNavigateTab,
-  onToggleLeak,
-  onTogglePump
 }) => {
-  // Live values matching screenshot defaults if available, otherwise fallback
-  const qIn = latestTelemetry?.latest?.q_in ?? 12.45;
-  const qOut = latestTelemetry?.latest?.q_out ?? 11.08;
-  const qBranch = latestTelemetry?.latest?.q_branch ?? 1.32;
-  const residual = Number((qIn - (qOut + qBranch)).toFixed(2)); // 1.37 L/min
-  const residualPercent = qIn > 0 ? Number(((residual / qIn) * 100).toFixed(2)) : 11.0;
-  const currentAmp = Number(((latestTelemetry?.latest?.current_ma ?? 1420) / 1000).toFixed(2)); // 1.42 A
-  const voltage = latestTelemetry?.latest?.voltage_v ?? 12.31;
-  const isLeak = latestTelemetry?.leak_active ?? true;
-  const isPumpOn = latestTelemetry?.pump_on ?? true;
+  const latest = latestTelemetry?.latest;
+  const evaluation = latestTelemetry?.evaluation;
+  const hasTelemetry = Boolean(latest);
+  const qIn = latest?.q_in ?? 0;
+  const qOut = latest?.q_out ?? 0;
+  const qBranch = latest?.q_branch ?? 0;
+  const residual = Number((latest?.residual ?? (qIn - (qOut + qBranch))).toFixed(3));
+  const residualPercent = qIn > 0 ? Number(((residual / qIn) * 100).toFixed(2)) : 0;
+  const currentAmp = Number(((latest?.current_ma ?? 0) / 1000).toFixed(2));
+  const voltage = latest?.voltage_v ?? 0;
+  const isLeak = Boolean(evaluation?.is_alarm);
+  const isPump1On = latest?.pump1_on ?? latestTelemetry?.pump_on ?? false;
+  const isPump2On = latest?.pump2_on ?? false;
+  const likelihood = Number(evaluation?.likelihood_score ?? 0);
+  const deviceOnline = Boolean(health?.device?.online);
+  const replayReady = Boolean(health?.data_source_ready);
+
+  const detectorRows = [
+    { key: "mass_balance", label: "Mass Balance", icon: Scale, color: "bg-blue-600" },
+    { key: "current_signature", label: "Current Signature", icon: Zap, color: "bg-purple-600" },
+    { key: "cusum", label: "CUSUM Drift", icon: TrendingUp, color: "bg-emerald-500" },
+    { key: "mnf", label: "Minimum Night Flow", icon: Activity, color: "bg-amber-500" },
+  ].map((definition) => ({
+    ...definition,
+    result: evaluation?.detectors?.[definition.key],
+  }));
 
   // Chart trend data points (Last 10 minutes)
   const chartData = telemetryHistory.length > 0 
@@ -135,19 +167,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         const timeLabel = timeObj.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
         return {
           time: timeLabel || `10:${14 + idx * 2}`,
-          Qin: sample.q_in || (12.45 + (Math.sin(idx) * 0.4)),
-          Qout: sample.q_out || (11.08 + (Math.cos(idx) * 0.3)),
-          Residual: sample.residual || (1.37 + (Math.sin(idx * 0.5) * 0.2))
+          Qin: sample.q_in ?? 0,
+          Qout: sample.q_out ?? 0,
+          Residual: sample.residual ?? 0
         };
       })
-    : [
-        { time: "10:14", Qin: 12.8, Qout: 10.9, Residual: 1.9 },
-        { time: "10:16", Qin: 12.2, Qout: 10.5, Residual: 1.7 },
-        { time: "10:18", Qin: 12.6, Qout: 11.1, Residual: 1.5 },
-        { time: "10:20", Qin: 12.3, Qout: 10.8, Residual: 1.5 },
-        { time: "10:22", Qin: 12.5, Qout: 11.2, Residual: 1.3 },
-        { time: "10:24", Qin: 12.45, Qout: 11.08, Residual: 1.37 },
-      ];
+    : [];
 
   return (
     <div className="space-y-6">
@@ -157,10 +182,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">ESP32 Controller</h3>
-            <p className="text-xl font-extrabold text-emerald-600">Online</p>
+            <p className={`text-xl font-extrabold ${deviceOnline ? "text-emerald-600" : "text-slate-500"}`}>
+              {deviceOnline ? "Online" : mode === "replay" ? "Standby" : "Offline"}
+            </p>
             <div className="flex items-center space-x-1.5 text-xs text-slate-500 font-medium pt-0.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Uptime: 2d 14h 32m</span>
+              <span className={`w-2 h-2 rounded-full ${deviceOnline ? "bg-emerald-500" : "bg-slate-300"}`} />
+              <span>{mode === "replay" && !deviceOnline ? "Hardware not required" : formatUptime(health?.device?.uptime_sec)}</span>
             </div>
           </div>
           <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shadow-2xs">
@@ -172,10 +199,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">MQTT Broker</h3>
-            <p className="text-xl font-extrabold text-emerald-600">Connected</p>
+            <p className={`text-xl font-extrabold ${health?.mqtt_connected ? "text-emerald-600" : "text-slate-500"}`}>
+              {health?.mqtt_connected ? "Connected" : "Disconnected"}
+            </p>
             <div className="flex items-center space-x-1.5 text-xs text-slate-500 font-medium pt-0.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Latency: 28 ms</span>
+              <span className={`w-2 h-2 rounded-full ${health?.mqtt_connected ? "bg-emerald-500" : "bg-slate-300"}`} />
+              <span>{health?.mqtt_connected ? "Subscribed to rig/telemetry" : "Broker on port 1883 unavailable"}</span>
             </div>
           </div>
           <div className="w-12 h-12 rounded-2xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-600 shadow-2xs">
@@ -187,10 +216,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">MongoDB</h3>
-            <p className="text-xl font-extrabold text-emerald-600">Connected</p>
+            <p className={`text-xl font-extrabold ${health?.database_connected ? "text-emerald-600" : "text-rose-600"}`}>
+              {health?.database_connected ? "Connected" : "Unavailable"}
+            </p>
             <div className="flex items-center space-x-1.5 text-xs text-slate-500 font-medium pt-0.5">
               <Database className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Records: 1,245,892</span>
+              <span>Records: {(health?.telemetry_records ?? 0).toLocaleString()}</span>
             </div>
           </div>
           <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shadow-2xs">
@@ -202,8 +233,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">System Health</h3>
-            <p className="text-xl font-extrabold text-emerald-600">Healthy</p>
-            <p className="text-xs text-slate-500 font-medium pt-0.5">All systems normal</p>
+            <p className={`text-xl font-extrabold ${health?.status === "ok" ? "text-emerald-600" : "text-amber-600"}`}>
+              {health?.status === "ok" ? "Operational" : "Degraded"}
+            </p>
+            <p className="text-xs text-slate-500 font-medium pt-0.5">
+              {mode === "replay" ? (replayReady ? "Replay pipeline verified" : "No replay sample") : (deviceOnline ? "Live telemetry verified" : "Waiting for ESP32")}
+            </p>
           </div>
           <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 shadow-2xs">
             <Activity className="w-6 h-6" />
@@ -227,7 +262,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {/* Visual Hydraulic Pipe Network Graphic */}
             <div className="relative py-8 px-4 bg-white rounded-2xl flex items-center justify-between my-2 overflow-x-auto min-h-[260px] select-none">
               {/* PUMP 1 */}
-              <PumpGraphic label="PUMP 1" isOn={isPumpOn} />
+              <PumpGraphic label="PUMP 1" isOn={isPump1On} />
 
               {/* Arrow -> */}
               <div className="flex items-center text-slate-400 font-bold px-1 shrink-0">
@@ -263,7 +298,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {/* Bottom Label: SERVO VALVE */}
                 <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
                   <span className="text-[11px] font-bold text-slate-800 uppercase tracking-tight">SERVO VALVE</span>
-                  <span className="text-xs font-semibold text-emerald-600">Open (45°)</span>
+                  <span className={`text-xs font-semibold ${(latest?.servo_deg ?? 0) > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                    {(latest?.servo_deg ?? 0) > 0 ? `Aperture ${latest?.servo_deg}°` : "Sealed (0°)"}
+                  </span>
                 </div>
               </div>
 
@@ -278,20 +315,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </svg>
               </div>
 
-              {/* PUMP 2 */}
-              <PumpGraphic label="PUMP 2" isOn={isPumpOn} />
+              <PumpGraphic label="PUMP 2" isOn={isPump2On} />
             </div>
           </div>
 
           {/* Bottom Residual Summary Cards inside System Overview */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
             <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 flex items-center justify-between shadow-2xs">
-              <span className="text-xs sm:text-sm font-bold text-slate-900">Current Residual (Qin - Qout)</span>
-              <span className="text-lg sm:text-xl font-extrabold text-red-600">{residual} L/min</span>
+              <span className="text-xs sm:text-sm font-bold text-slate-900">Bias-corrected residual</span>
+              <span className={`text-lg sm:text-xl font-extrabold ${Math.abs(residual) > 0.2 ? "text-rose-600" : "text-emerald-600"}`}>{residual} L/min</span>
             </div>
             <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 flex items-center justify-between shadow-2xs">
               <span className="text-xs sm:text-sm font-bold text-slate-900">Residual %</span>
-              <span className="text-lg sm:text-xl font-extrabold text-red-600">{residualPercent.toFixed(2)}%</span>
+              <span className={`text-lg sm:text-xl font-extrabold ${Math.abs(residualPercent) > 5 ? "text-rose-600" : "text-emerald-600"}`}>{residualPercent.toFixed(2)}%</span>
             </div>
           </div>
         </div>
@@ -301,7 +337,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* Active Experiment Card */}
           <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-slate-900 tracking-tight">Active Experiment</h3>
+              <h3 className="text-sm font-bold text-slate-900 tracking-tight">Active Data Session</h3>
               <button 
                 onClick={() => onNavigateTab("experiment-control")}
                 className="text-xs font-bold text-blue-600 hover:text-blue-700 transition"
@@ -313,40 +349,46 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-[11px] text-slate-400 font-medium">Experiment ID</div>
-                  <div className="text-sm font-extrabold text-slate-900 font-mono">EXP-2025-05-24-001</div>
+                  <div className="text-[11px] text-slate-400 font-medium">Source identity</div>
+                  <div className="text-sm font-extrabold text-slate-900 font-mono">
+                    {mode === "replay" ? (health?.replay_run_id || "NO_RUN") : (latest?.device_id || health?.device?.device_id || "NO_DEVICE")}
+                  </div>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold">
-                  RUNNING
+                <span className={`px-3 py-1 rounded-full text-[11px] font-bold ${hasTelemetry ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                  {hasTelemetry ? (mode === "replay" ? "REPLAYING" : "STREAMING") : "WAITING"}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-100">
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Started At</span>
-                  <span className="font-semibold text-slate-800">May 24, 2025 08:15 AM</span>
+                  <span className="text-slate-400 block text-[11px]">Latest sample</span>
+                  <span className="font-semibold text-slate-800">{formatSampleTime(latest?.ts)}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Duration</span>
-                  <span className="font-semibold text-slate-800">02h 09m 38s</span>
+                  <span className="text-slate-400 block text-[11px]">Evidence window</span>
+                  <span className="font-semibold text-slate-800">
+                    {evaluation?.time_window ? `${evaluation.time_window.duration_sec}s` : `${telemetryHistory.length} samples`}
+                  </span>
                 </div>
               </div>
 
               {/* Red Leak Alarm Banner */}
               <div 
                 onClick={() => onNavigateTab("leak-detection")}
-                className="bg-rose-600 hover:bg-rose-700 text-white p-3.5 rounded-2xl flex items-center justify-between cursor-pointer transition shadow-md shadow-rose-600/20"
+                className={`${isLeak ? "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/20" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"} p-3.5 rounded-2xl flex items-center justify-between cursor-pointer transition shadow-md`}
               >
                 <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                    <AlertTriangle className="w-5 h-5 text-white" />
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${isLeak ? "bg-white/20" : "bg-emerald-100"}`}>
+                      <AlertTriangle className={`w-5 h-5 ${isLeak ? "text-white" : "text-emerald-700"}`} />
                   </div>
                   <div>
-                    <div className="text-xs font-black tracking-wide uppercase">LEAK DETECTED</div>
-                    <div className="text-xs font-semibold text-rose-100">Confidence: 92.4%</div>
+                    <div className="text-xs font-black tracking-wide uppercase">{isLeak ? "LEAK LIKELY" : "NO CONFIRMED LEAK"}</div>
+                    <div className={`text-xs font-semibold ${isLeak ? "text-rose-100" : "text-emerald-700"}`}>
+                      Likelihood: {likelihood.toFixed(1)}% · {evaluation?.confidence_tier || "NONE"}
+                    </div>
                   </div>
                 </div>
-                <ChevronRight className="w-5 h-5 text-white/80" />
+                <ChevronRight className={`w-5 h-5 ${isLeak ? "text-white/80" : "text-emerald-600"}`} />
               </div>
             </div>
           </div>
@@ -364,62 +406,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             <div className="space-y-4">
-              {/* Mass Balance Detector */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center space-x-2">
-                    <Scale className="w-4 h-4 text-blue-600" />
-                    <span className="font-semibold text-slate-800">Mass Balance Detector</span>
+              {detectorRows.map(({ key, label, icon: Icon, color, result }) => {
+                const confidence = Math.max(0, Math.min(100, Number(result?.confidence ?? 0) * 100));
+                const alarm = Boolean(result?.is_alarm);
+                return (
+                  <div key={key} className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs gap-3">
+                      <div className="flex items-center space-x-2 min-w-0">
+                        <Icon className="w-4 h-4 text-slate-600 shrink-0" />
+                        <span className="font-semibold text-slate-800 truncate">{label}</span>
+                      </div>
+                      <div className="flex items-center space-x-2 shrink-0">
+                        <span className="font-bold text-slate-900">{confidence.toFixed(0)}%</span>
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase ${alarm ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>
+                          {alarm ? "ALERT" : "NORMAL"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                      <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${confidence}%` }} />
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-slate-900">92.4%</span>
-                    <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-700 text-[10px] font-extrabold uppercase">
-                      ALERT
-                    </span>
-                  </div>
-                </div>
-                <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div className="h-full bg-blue-600 rounded-full" style={{ width: "92.4%" }} />
-                </div>
-              </div>
-
-              {/* Current Signature Detector */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center space-x-2">
-                    <Zap className="w-4 h-4 text-purple-600" />
-                    <span className="font-semibold text-slate-800">Current Signature Detector</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-slate-900">85.7%</span>
-                    <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-700 text-[10px] font-extrabold uppercase">
-                      ALERT
-                    </span>
-                  </div>
-                </div>
-                <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div className="h-full bg-purple-600 rounded-full" style={{ width: "85.7%" }} />
-                </div>
-              </div>
-
-              {/* CUSUM Detector */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center space-x-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-600" />
-                    <span className="font-semibold text-slate-800">CUSUM Detector</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-slate-900">78.3%</span>
-                    <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 text-[10px] font-extrabold uppercase">
-                      SUSPECT
-                    </span>
-                  </div>
-                </div>
-                <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: "78.3%" }} />
-                </div>
-              </div>
+                );
+              })}
+              {!evaluation && <p className="text-xs text-slate-400">Waiting for the first evaluated sample.</p>}
             </div>
           </div>
         </div>
@@ -431,7 +441,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs space-y-4">
           <h3 className="text-sm font-bold text-slate-900 tracking-tight flex items-center space-x-2">
             <Activity className="w-4 h-4 text-blue-600" />
-            <span>Live Telemetry Summary</span>
+            <span>{mode === "live" ? "Live" : "Replay"} Telemetry Summary</span>
           </h3>
 
           <div className="space-y-3.5 divide-y divide-slate-100 text-xs">
@@ -502,7 +512,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
                 <XAxis dataKey="time" stroke="#94A3B8" fontSize={11} tickLine={false} />
-                <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} domain={[0, 16]} />
+                <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} domain={["auto", "auto"]} />
                 <Tooltip 
                   contentStyle={{ backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: "12px", fontSize: "12px" }} 
                 />
@@ -527,50 +537,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="space-y-3.5">
-            {/* Alert 1 */}
-            <div 
-              onClick={() => onNavigateTab("alerts")}
-              className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition cursor-pointer border border-transparent hover:border-slate-100"
-            >
-              <div className="flex items-start space-x-3">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 mt-1 shrink-0" />
-                <div>
-                  <div className="text-xs font-bold text-slate-800">Leak detected with high confidence</div>
-                  <div className="text-[11px] text-slate-400">May 24, 2025 10:24:10 AM</div>
+            {isLeak ? (
+              <>
+                <div
+                  onClick={() => onNavigateTab("leak-detection")}
+                  className="flex items-center justify-between p-2.5 rounded-xl hover:bg-rose-50 transition cursor-pointer border border-rose-100"
+                >
+                  <div className="flex items-start space-x-3 min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 mt-1 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-800">Leak likelihood {likelihood.toFixed(1)}% · {evaluation?.zone || "zone pending"}</div>
+                      <div className="text-[11px] text-slate-400">{formatSampleTime(latest?.ts)}</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                </div>
+                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-100">
+                  <div className="text-xs font-bold text-amber-900">Evidence</div>
+                  <div className="text-[11px] text-amber-800 mt-1 leading-relaxed">{evaluation?.evidence || "Detector evidence is being assembled."}</div>
+                </div>
+              </>
+            ) : (
+              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+                <div className="text-xs font-bold text-emerald-800">No active leak alert</div>
+                <div className="text-[11px] text-emerald-700 mt-1">
+                  {hasTelemetry ? `Latest sample evaluated ${formatSampleTime(latest?.ts)}.` : "Waiting for telemetry before evaluating the network."}
                 </div>
               </div>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-            </div>
-
-            {/* Alert 2 */}
-            <div 
-              onClick={() => onNavigateTab("alerts")}
-              className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition cursor-pointer border border-transparent hover:border-slate-100"
-            >
-              <div className="flex items-start space-x-3">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 mt-1 shrink-0" />
-                <div>
-                  <div className="text-xs font-bold text-slate-800">Residual above threshold</div>
-                  <div className="text-[11px] text-slate-400">May 24, 2025 10:22:45 AM</div>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-            </div>
-
-            {/* Alert 3 */}
-            <div 
-              onClick={() => onNavigateTab("alerts")}
-              className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition cursor-pointer border border-transparent hover:border-slate-100"
-            >
-              <div className="flex items-start space-x-3">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-500 mt-1 shrink-0" />
-                <div>
-                  <div className="text-xs font-bold text-slate-800">Experiment started</div>
-                  <div className="text-[11px] text-slate-400">May 24, 2025 08:15:00 AM</div>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-            </div>
+            )}
+            <p className="text-[10px] leading-relaxed text-slate-400">
+              Indicative decision support only. Field verification is required before repair action.
+            </p>
           </div>
         </div>
       </div>

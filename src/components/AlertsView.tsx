@@ -1,81 +1,48 @@
-import React, { useState } from "react";
-import { Bell, AlertTriangle, CheckCircle, Info, Filter, ShieldAlert } from "lucide-react";
+import React from "react";
+import { AlertTriangle, Bell, CheckCircle2, ShieldAlert } from "lucide-react";
 
-export const AlertsView: React.FC = () => {
-  const [filter, setFilter] = useState<"ALL" | "CRITICAL" | "HIGH" | "MEDIUM">("ALL");
+interface AlertsViewProps { evaluation: any | null; }
 
-  const alerts = [
-    { id: 1, title: "Leak detected with high confidence (Branch A)", severity: "CRITICAL", confidence: "92.4%", timestamp: "May 24, 2025 10:24:10 AM", status: "ACTIVE" },
-    { id: 2, title: "Residual above 3-Sigma threshold (1.37 LPM)", severity: "HIGH", confidence: "85.7%", timestamp: "May 24, 2025 10:22:45 AM", status: "ACKNOWLEDGED" },
-    { id: 3, title: "Motor current load drop detected (-35.0 mA)", severity: "HIGH", confidence: "81.0%", timestamp: "May 24, 2025 10:20:12 AM", status: "ACKNOWLEDGED" },
-    { id: 4, title: "CUSUM accumulation score breached decision boundary h=3.0", severity: "MEDIUM", confidence: "78.3%", timestamp: "May 24, 2025 10:15:30 AM", status: "RESOLVED" },
-    { id: 5, title: "Benchmark Experiment EXP-2025-05-24-001 started", severity: "INFO", confidence: "100%", timestamp: "May 24, 2025 08:15:00 AM", status: "RESOLVED" },
-  ];
-
-  const filteredAlerts = filter === "ALL" ? alerts : alerts.filter((a) => a.severity === filter);
+export const AlertsView: React.FC<AlertsViewProps> = ({ evaluation }) => {
+  const isAlarm = Boolean(evaluation?.is_alarm);
+  const activeMethods: string[] = evaluation?.active_methods || [];
+  const timestamp = evaluation?.ts ? new Date(evaluation.ts * 1000).toLocaleString() : null;
 
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center space-x-2">
-              <Bell className="w-6 h-6 text-blue-600" />
-              <span>System Alerts & Notifications</span>
-            </h2>
-            <p className="text-xs text-slate-500 mt-1">
-              Real-time multi-detector anomaly alerts, confidence evaluation, and historical event log.
-            </p>
-          </div>
-
-          <div className="flex items-center space-x-2 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
-            {(["ALL", "CRITICAL", "HIGH", "MEDIUM"] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-3 py-1.5 rounded-lg transition ${
-                  filter === f ? "bg-white text-slate-900 shadow-2xs font-bold" : "text-slate-500 hover:text-slate-800"
-                }`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
+        <div className="mb-6">
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center space-x-2"><Bell className="w-6 h-6 text-blue-600" /><span>Verified Alert State</span></h2>
+          <p className="text-xs text-slate-500 mt-1">The current fused decision and its contributing detector channels—no fabricated alert history.</p>
         </div>
 
-        <div className="space-y-3">
-          {filteredAlerts.map((a) => (
-            <div key={a.id} className="bg-slate-50 border border-slate-200/70 rounded-2xl p-4 flex items-center justify-between">
-              <div className="flex items-start space-x-3.5">
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                  a.severity === "CRITICAL" ? "bg-rose-100 text-rose-600" :
-                  a.severity === "HIGH" ? "bg-amber-100 text-amber-600" : "bg-blue-100 text-blue-600"
-                }`}>
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
+        {isAlarm ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center"><ShieldAlert className="w-5 h-5" /></div>
                 <div>
-                  <div className="flex items-center space-x-2">
-                    <h4 className="text-sm font-bold text-slate-800">{a.title}</h4>
-                    <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-extrabold ${
-                      a.severity === "CRITICAL" ? "bg-rose-600 text-white" :
-                      a.severity === "HIGH" ? "bg-amber-500 text-white" : "bg-blue-500 text-white"
-                    }`}>
-                      {a.severity}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-0.5">{a.timestamp} • Confidence: {a.confidence}</p>
+                  <h3 className="font-black text-rose-900">Probable leak · {Number(evaluation.likelihood_score || 0).toFixed(1)}% likelihood</h3>
+                  <p className="text-xs text-rose-800 mt-1">{evaluation.evidence}</p>
+                  <p className="text-[11px] text-rose-600 mt-2">{timestamp} · Zone {evaluation.zone || "pending"} · {evaluation.confidence_tier}</p>
                 </div>
               </div>
-
-              <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                a.status === "ACTIVE" ? "bg-rose-100 text-rose-700 border border-rose-200" :
-                a.status === "ACKNOWLEDGED" ? "bg-amber-100 text-amber-700 border border-amber-200" : "bg-slate-200 text-slate-700"
-              }`}>
-                {a.status}
-              </span>
+              <span className="rounded-full bg-rose-600 px-3 py-1 text-[10px] font-black text-white">ACTIVE</span>
             </div>
-          ))}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center">
+            <CheckCircle2 className="w-9 h-9 mx-auto text-emerald-600" />
+            <h3 className="mt-3 text-sm font-black text-emerald-900">No fused leak alert</h3>
+            <p className="mt-1 text-xs text-emerald-700">{timestamp ? `Latest evaluated sample: ${timestamp}` : "Waiting for evaluated telemetry."}</p>
+          </div>
+        )}
+
+        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-bold text-slate-800 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-500" />Contributing channels</div>
+          <p className="text-xs text-slate-500 mt-2">{activeMethods.length ? activeMethods.join(" · ") : "No detector channel is currently above its alarm threshold."}</p>
         </div>
+        <p className="mt-4 text-[11px] text-slate-400">{evaluation?.false_positive_warning?.disclaimer || "Indicative result only; field verification is required."}</p>
       </div>
     </div>
   );

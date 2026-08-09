@@ -4,7 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "tsx server.ts",
+    "dev:api": "python -m uvicorn backend.api_server:app --host 0.0.0.0 --port 8001",
+    "demo": "python -m backend.replay.seed_runs && node scripts/dev.mjs",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",

@@ -8,6 +8,47 @@ export interface TelemetrySample {
   pressure_bar: number;
   residual: number;
   leak_active: boolean;
+  pump_on?: boolean;
+  pump1_on?: boolean;
+  pump2_on?: boolean;
+  servo_deg?: number;
+  device_id?: string;
+  ts_source?: "device_ntp" | "server_received" | "logged";
+}
+
+export interface DeviceHealth {
+  online: boolean;
+  device_id: string;
+  last_seen_ts: number | null;
+  last_seen_age_sec: number | null;
+  uptime_sec: number | null;
+  wifi_rssi: number | null;
+  heap_free: number | null;
+  samples_received: number;
+}
+
+export interface SystemHealth {
+  status: "ok" | "degraded" | "error";
+  mode: "live" | "replay";
+  mqtt_connected: boolean;
+  database_connected: boolean;
+  telemetry_records: number;
+  data_source_ready: boolean;
+  simulation_mode: boolean;
+  replay_run_id: string | null;
+  timestamp: number;
+  device: DeviceHealth;
+  message?: string;
+}
+
+export interface TelemetryEnvelope {
+  mode: "live" | "replay";
+  latest: TelemetrySample | null;
+  pump_on: boolean;
+  pump1_on?: boolean;
+  pump2_on?: boolean;
+  leak_active: boolean;
+  evaluation: any | null;
 }
 
 export interface DetectorOutput {

@@ -9,12 +9,13 @@ void IRAM_ATTR FlowSensor::isrHandler(void* arg) {
 }
 
 void FlowSensor::begin() {
-    pinMode(pin, INPUT_PULLUP);
+    // External 10k/20k divider conditions the 5V open-collector signal.
+    pinMode(pin, INPUT);
     lastReadMs = millis();
     // attachInterruptArg lets each instance register its own ISR without a
     // global lookup table — required since FlowSensor::handleISR can't be
     // used directly as a C function pointer.
-    attachInterruptArg(digitalPinToInterrupt(pin), isrHandler, this, FALLING);
+    attachInterruptArg(digitalPinToInterrupt(pin), isrHandler, this, RISING);
 }
 
 void FlowSensor::handleISR() {
@@ -44,4 +45,8 @@ uint32_t FlowSensor::getTotalPulses() {
     uint32_t total = pulseCount;
     interrupts();
     return total;
+}
+
+void FlowSensor::setKFactor(float pulsesPerLitre) {
+    if (pulsesPerLitre > 0.0f) kFactor = pulsesPerLitre;
 }

@@ -31,8 +31,9 @@ class ConfigLoader:
 
     def get_defaults(self):
         return {
-            "mqtt": {"host": "localhost", "port": 1883, "topic": "rig/telemetry", "cmd_topic": "rig/cmd"},
+            "mqtt": {"host": "localhost", "port": 1883, "topic": "rig/telemetry", "status_topic": "rig/status", "cmd_topic": "rig/cmd"},
             "database": {"uri": "mongodb://localhost:27017", "name": "water_leak_detection"},
+            "hydraulics": {"topology": "recombined_branch", "zero_leak_bias_lpm": 0.02},
             "detector": {
                 "sigma_multiplier": 3.0,
                 "persistence_seconds": 10,
@@ -44,6 +45,17 @@ class ConfigLoader:
         }
 
     def get(self, key_path: str, default=None):
+        env_overrides = {
+            "mqtt.host": "MQTT_HOST",
+            "mqtt.port": "MQTT_PORT",
+            "database.uri": "MONGO_URI",
+            "database.name": "MONGO_DB_NAME",
+        }
+        env_name = env_overrides.get(key_path)
+        if env_name and os.getenv(env_name) is not None:
+            value = os.getenv(env_name)
+            return int(value) if key_path == "mqtt.port" else value
+
         keys = key_path.split(".")
         val = self._config
         for k in keys:

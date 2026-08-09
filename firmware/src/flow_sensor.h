@@ -19,6 +19,7 @@ public:
     void handleISR();
     float readFlowLPM();
     uint32_t getTotalPulses();
+    void setKFactor(float pulsesPerLitre);
 };
 
 #endif

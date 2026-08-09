@@ -2,11 +2,18 @@ mqtt:
   host: "localhost"
   port: 1883
   topic: "rig/telemetry"
+  status_topic: "rig/status"
   cmd_topic: "rig/cmd"
 
 database:
   uri: "mongodb://localhost:27017"
   name: "water_leak_detection"
+
+hydraulics:
+  # The physical Branch A/B flows rejoin before Q_out, so Q_branch is a
+  # localization/demand signal and must not be subtracted a second time.
+  topology: "recombined_branch"
+  zero_leak_bias_lpm: 0.02
 
 detector:
   sigma_multiplier: 3.0

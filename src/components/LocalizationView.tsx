@@ -28,10 +28,10 @@ export const LocalizationView: React.FC = () => {
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs">
         <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2 tracking-tight">
           <GitBranch className="w-6 h-6 text-purple-600" />
-          <span>Phase 3: Hydraulic Pipe Branch Localization & Isolation Engine</span>
+          <span>Hydraulic Zone Localization</span>
         </h2>
         <p className="text-xs text-slate-500 mt-1">
-          Differential flow topology analysis and pressure drop propagation mapping to pinpoint exact pipe leak coordinates and suggest isolation valves.
+          Differential flow evidence narrows the inspection zone; field instruments must confirm the exact leak location.
         </p>
       </div>
 
@@ -82,7 +82,7 @@ export const LocalizationView: React.FC = () => {
 
         {/* Right: Localization Info */}
         <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
-          <h3 className="text-sm font-bold text-slate-900">Isolation & Localizer Summary</h3>
+          <h3 className="text-sm font-bold text-slate-900">Localization Summary</h3>
 
           {isLocalized ? (
             <div className="space-y-4">
@@ -102,10 +102,10 @@ export const LocalizationView: React.FC = () => {
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2 text-xs">
                 <div className="font-bold text-slate-900 flex items-center space-x-2">
                   <Wrench className="w-4 h-4 text-blue-600" />
-                  <span>Suggested Isolation Action</span>
+                  <span>Field Verification Brief</span>
                 </div>
                 <p className="text-slate-600 text-[11px] leading-relaxed">
-                  Actuate solenoid valve <span className="text-slate-900 font-mono font-extrabold bg-slate-200/80 px-1.5 py-0.5 rounded">{locData.isolation_valve_suggested}</span> to isolate Branch A and prevent pressure loss in main trunk.
+                  {locData.recommended_next_step || "Inspect the suspected zone and compare handheld measurements with the event window before any intervention."}
                 </p>
               </div>
             </div>

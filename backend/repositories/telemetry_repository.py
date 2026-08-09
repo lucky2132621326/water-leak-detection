@@ -15,6 +15,7 @@ class TelemetryRepository:
         doc = {
             "ts": telemetry.ts,
             "seq": telemetry.seq,
+            "device_id": telemetry.device_id,
             "run_id": run_id,  # None for live telemetry, set for a replay/recorded run
             "flow": {
                 "q_in_lpm": telemetry.flow.q_in_lpm,

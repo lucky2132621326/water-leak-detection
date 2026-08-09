@@ -1,26 +1,22 @@
 import React from "react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
-import { Play, Square, ShieldAlert, Waves } from "lucide-react";
+import { Radio, ShieldCheck, Waves } from "lucide-react";
+import type { SystemHealth, TelemetryEnvelope, TelemetrySample } from "../types";
 
 interface LiveMonitorViewProps {
-  telemetryHistory: any[];
-  latestTelemetry: any;
-  onToggleLeak: (action: "OPEN" | "CLOSE", size?: number) => void;
-  onTogglePump: (state: boolean) => void;
-  onToggleAirBubbles: (state: boolean) => void;
+  telemetryHistory: TelemetrySample[];
+  latestTelemetry: TelemetryEnvelope | null;
+  mode: "live" | "replay";
+  health: SystemHealth | null;
 }
 
 export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
   telemetryHistory,
   latestTelemetry,
-  onToggleLeak,
-  onTogglePump,
-  onToggleAirBubbles
+  mode,
+  health,
 }) => {
   const latest = latestTelemetry?.latest;
-  const isPumpOn = latestTelemetry?.pump_on ?? true;
-  const isLeakActive = latestTelemetry?.leak_active ?? false;
-  const airBubbles = latestTelemetry?.air_bubble_anomaly ?? false;
 
   const chartData = telemetryHistory.map((item) => ({
     time: new Date(item.ts * 1000).toLocaleTimeString([], { hour12: false, minute: '2-digit', second: '2-digit' }),
@@ -32,77 +28,26 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Top Controls Banner */}
+      {/* Source and safety banner */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2 tracking-tight">
               <Waves className="w-6 h-6 text-blue-600" />
-              <span>Phase 1: Telemetry Pipeline & Hardware Control Bench</span>
+              <span>Telemetry Observatory</span>
             </h2>
             <p className="text-xs text-slate-500 mt-1">
-              Direct telemetry ingestion, Hall-effect pulse conversion (1Hz MQTT), and solenoid valve actuation.
+              One canonical 1 Hz stream for both ESP32 hardware telemetry and deterministic replay evidence.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Pump Control */}
-            <button
-              onClick={() => onTogglePump(!isPumpOn)}
-              className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center space-x-2 transition shadow-2xs ${
-                isPumpOn
-                  ? "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
-                  : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20"
-              }`}
-            >
-              {isPumpOn ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-              <span>{isPumpOn ? "Stop Pump (12V)" : "Start Pump"}</span>
-            </button>
-
-            {/* Leak Injector Buttons */}
-            {!isLeakActive ? (
-              <div className="flex items-center space-x-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-200/80">
-                <span className="text-xs text-slate-500 font-bold px-2">Inject Leak:</span>
-                <button
-                  onClick={() => onToggleLeak("OPEN", 0.50)}
-                  className="bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 font-bold px-3 py-1.5 rounded-lg text-xs transition shadow-2xs"
-                >
-                  Small (0.5 LPM)
-                </button>
-                <button
-                  onClick={() => onToggleLeak("OPEN", 1.25)}
-                  className="bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-800 font-extrabold px-3 py-1.5 rounded-lg text-xs transition shadow-2xs"
-                >
-                  Medium (1.25 LPM)
-                </button>
-                <button
-                  onClick={() => onToggleLeak("OPEN", 2.50)}
-                  className="bg-rose-600 text-white hover:bg-rose-700 font-black px-3.5 py-1.5 rounded-lg text-xs transition shadow-md shadow-rose-600/20"
-                >
-                  Large (2.5 LPM)
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => onToggleLeak("CLOSE")}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition shadow-md shadow-emerald-600/20 flex items-center space-x-2"
-              >
-                <ShieldAlert className="w-4 h-4" />
-                <span>Seal Leak (Close Solenoid)</span>
-              </button>
-            )}
-
-            {/* Air Bubble Anomaly Simulator */}
-            <button
-              onClick={() => onToggleAirBubbles(!airBubbles)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition ${
-                airBubbles
-                  ? "bg-purple-50 border-purple-300 text-purple-700 shadow-2xs"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Air Bubbles: {airBubbles ? "ON" : "OFF"}
-            </button>
+          <div className="flex flex-wrap items-center gap-2.5 text-xs font-bold">
+            <span className={`px-3 py-2 rounded-xl border flex items-center gap-2 ${mode === "live" ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-indigo-50 border-indigo-200 text-indigo-700"}`}>
+              <Radio className="w-4 h-4" /> {mode === "live" ? "LIVE ESP32" : `REPLAY ${health?.replay_run_id || ""}`}
+            </span>
+            <span className="px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4" /> Read-only safety boundary
+            </span>
           </div>
         </div>
       </div>

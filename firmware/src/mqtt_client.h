@@ -8,7 +8,7 @@
 // Forward-declared so main.cpp can wire valve/pump commands received on
 // rig/cmd back into the RelayController/ServoController instances without
 // this class needing to know about them directly.
-typedef void (*CommandCallback)(const char* valveId, bool open);
+typedef void (*CommandCallback)(bool pump1, bool pump2, int servoDeg);
 
 class MQTTHandler {
 private:
@@ -30,9 +30,11 @@ public:
     void handleMessage(char* topic, byte* payload, unsigned int length);
     void loop();
     bool isConnected();
-    void publishTelemetry(unsigned long ts, float qIn, float qOut, float qBranch,
+    void publishTelemetry(unsigned long ts, uint32_t seq, float qIn, float qOut, float qBranch,
                            float currentMA, float voltageV,
-                           uint32_t rawPulsesIn, uint32_t rawPulsesOut, bool solenoidOpen);
+                           uint32_t rawPulsesIn, uint32_t rawPulsesOut, uint32_t rawPulsesBranch,
+                           bool pump1On, bool pump2On, int servoDeg,
+                           unsigned long uptimeSec, int wifiRssi, uint32_t freeHeap);
     void publishStatus(int wifiRssi, unsigned long uptimeSec, uint32_t heapFree);
 };
 

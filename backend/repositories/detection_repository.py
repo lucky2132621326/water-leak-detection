@@ -29,7 +29,7 @@ class LeakEventRepository:
     def __init__(self, db=None):
         self.db = db if db is not None else get_db()
 
-    def create_event(self, start_ts, location_node, severity_lpm, run_id=None, is_ground_truth=False, notes=""):
+    def create_event(self, start_ts, location_node, severity_lpm, run_id=None, is_ground_truth=False, notes="", metadata=None):
         doc = {
             "start_ts": start_ts,
             "stop_ts": None,
@@ -38,6 +38,7 @@ class LeakEventRepository:
             "run_id": run_id,
             "is_ground_truth": is_ground_truth,
             "notes": notes,
+            "metadata": metadata or {},
         }
         result = self.db.leak_events.insert_one(doc)
         doc["_id"] = result.inserted_id

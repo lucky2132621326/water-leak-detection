@@ -38,7 +38,7 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   onSelectTab,
-  unreadAlertsCount = 3
+  unreadAlertsCount = 0
 }) => {
   const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="w-5 h-5" /> },
@@ -47,12 +47,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "leak-detection", label: "Leak Detection", icon: <Droplets className="w-5 h-5" /> },
     { id: "localization", label: "Localization", icon: <MapPin className="w-5 h-5" /> },
     { id: "replay", label: "Replay & Benchmark", icon: <RotateCcw className="w-5 h-5" /> },
-    { id: "analytics", label: "Analytics", icon: <BarChart3 className="w-5 h-5" /> },
     { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" /> },
     { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" /> },
-    { id: "reports", label: "Reports", icon: <FileText className="w-5 h-5" /> },
     { id: "alerts", label: "Alerts", icon: <Bell className="w-5 h-5" />, badge: unreadAlertsCount },
-    { id: "settings", label: "Settings", icon: <Settings className="w-5 h-5" /> }
   ];
 
   return (
@@ -66,7 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <h1 className="text-base font-bold text-white tracking-tight leading-tight">
             Smart Water System
           </h1>
-          <p className="text-[11px] text-blue-400 font-medium">Analytics & Hardware Rig</p>
+          <p className="text-[11px] text-blue-400 font-medium">Explainable Water Intelligence</p>
         </div>
       </div>
 
@@ -111,8 +108,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </svg>
         </div>
         <div className="relative z-10 text-[11px] text-slate-500 leading-relaxed">
-          <p>© 2025 Smart Water System</p>
-          <p className="text-slate-600">All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Smart Water System</p>
+          <p className="text-slate-600">Decision support · Verify in field</p>
         </div>
       </div>
     </aside>

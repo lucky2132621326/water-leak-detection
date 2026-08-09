@@ -28,6 +28,12 @@ class CalibrationRepository:
             "sigma_lpm": 0.03,
             "ina219_no_load_ma": 420.0,
             "ina219_load_slope": 2.5,
+            "clamp_calibration": {
+                "TEE_A": {"0.25": 0.18, "0.50": 0.34, "0.75": 0.51, "1.00": 0.72},
+                "TEE_B": {"0.25": 0.17, "0.50": 0.33, "0.75": 0.50, "1.00": 0.70},
+                "TEE_C": {"0.25": 0.19, "0.50": 0.35, "0.75": 0.53, "1.00": 0.74}
+            },
+            "clamp_calibration_status": "PROVISIONAL — replace with volumetric test results",
             "calibrated_at": 1754131200
         }
 

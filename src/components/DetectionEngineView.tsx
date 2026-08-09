@@ -22,7 +22,7 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           <div>
             <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2 tracking-tight">
               <ShieldAlert className="w-6 h-6 text-rose-600" />
-              <span>Phase 2 & 3: Multi-Algorithm Detection & Sensor Fusion Engine</span>
+              <span>Explainable Detection & Sensor Fusion</span>
             </h2>
             <p className="text-xs text-slate-500 mt-1">
               Parallel evaluation of Mass Balance (3-Sigma), Motor Current Signatures, Minimum Night Flow, and CUSUM residual cumulative sum.
@@ -33,32 +33,48 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
             <div className="text-right">
               <div className="text-xs text-slate-400 font-medium">Fused Confidence Index</div>
               <div className="text-2xl font-black text-slate-900">
-                {((fusion?.fused_confidence ?? 0.924) * 100).toFixed(1)}%
+                {((fusion?.fused_confidence ?? 0) * 100).toFixed(1)}%
               </div>
             </div>
             <div className={`px-3.5 py-1.5 rounded-full text-xs font-bold border ${
-              fusion?.is_alarm ?? true
+              fusion?.is_alarm ?? false
                 ? "bg-rose-100 text-rose-700 border-rose-200 animate-pulse"
                 : "bg-emerald-100 text-emerald-700 border-emerald-200"
             }`}>
-              {fusion?.severity || "ALARM HIGH"}
+              {fusion?.is_alarm ? (fusion?.severity || "ALARM") : "MONITORING"}
             </div>
           </div>
         </div>
+      </div>
+
+      <div className={`border rounded-2xl p-5 ${evaluation?.is_alarm ? "bg-rose-50 border-rose-200" : "bg-emerald-50 border-emerald-200"}`}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className={`text-xs font-black uppercase tracking-wider ${evaluation?.is_alarm ? "text-rose-700" : "text-emerald-700"}`}>
+              {evaluation?.is_alarm ? "Likely leak event" : "No confirmed event"}
+            </div>
+            <p className="text-sm font-semibold text-slate-800 mt-1">{evaluation?.evidence || "Waiting for an evaluated telemetry sample."}</p>
+          </div>
+          <div className="text-right text-xs text-slate-600">
+            <div><span className="font-bold">Zone:</span> {evaluation?.zone || "NONE"}</div>
+            <div><span className="font-bold">Window:</span> {evaluation?.time_window ? `${evaluation.time_window.duration_sec}s` : "not active"}</div>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-500 mt-3">{evaluation?.false_positive_warning?.disclaimer || "Results are indicative only; field verification is required."}</p>
       </div>
 
       {/* 4 Detectors Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
         {/* 1. Mass Balance */}
         <div className={`bg-white border rounded-2xl p-5 shadow-xs transition ${
-          massBalance?.is_alarm ?? true ? "border-rose-300 bg-rose-50/30" : "border-slate-200/80"
+          massBalance?.is_alarm ?? false ? "border-rose-300 bg-rose-50/30" : "border-slate-200/80"
         }`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
               <Scale className="w-4 h-4 text-blue-600" />
               <h3 className="text-sm font-bold text-slate-900">Mass Balance (3-Sigma)</h3>
             </div>
-            {(massBalance?.is_alarm ?? true) ? (
+            {(massBalance?.is_alarm ?? false) ? (
               <span className="text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-full font-bold">ALARM</span>
             ) : (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">OK</span>
@@ -67,29 +83,29 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           <div className="space-y-2 text-xs">
             <div className="flex justify-between text-slate-500">
               <span>Residual (ΔQ):</span>
-              <span className="font-mono text-slate-900 font-bold">{massBalance?.residual ?? 1.37} L/min</span>
+              <span className="font-mono text-slate-900 font-bold">{massBalance?.residual ?? 0} L/min</span>
             </div>
             <div className="flex justify-between text-slate-500">
               <span>Threshold (3-Sigma):</span>
-              <span className="font-mono text-slate-700 font-semibold">{massBalance?.threshold ?? 0.3} L/min</span>
+              <span className="font-mono text-slate-700 font-semibold">{massBalance?.threshold ?? 0} L/min</span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
-              <span className="font-extrabold text-blue-600">{((massBalance?.confidence ?? 0.924) * 100).toFixed(1)}%</span>
+              <span className="font-extrabold text-blue-600">{((massBalance?.confidence ?? 0) * 100).toFixed(1)}%</span>
             </div>
           </div>
         </div>
 
         {/* 2. Current Signature */}
         <div className={`bg-white border rounded-2xl p-5 shadow-xs transition ${
-          currentSig?.is_alarm ?? true ? "border-purple-300 bg-purple-50/30" : "border-slate-200/80"
+          currentSig?.is_alarm ?? false ? "border-purple-300 bg-purple-50/30" : "border-slate-200/80"
         }`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
               <Zap className="w-4 h-4 text-purple-600" />
               <h3 className="text-sm font-bold text-slate-900">Current Signature</h3>
             </div>
-            {(currentSig?.is_alarm ?? true) ? (
+            {(currentSig?.is_alarm ?? false) ? (
               <span className="text-[10px] bg-purple-600 text-white px-2 py-0.5 rounded-full font-bold">ALARM</span>
             ) : (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">OK</span>
@@ -98,15 +114,15 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           <div className="space-y-2 text-xs">
             <div className="flex justify-between text-slate-500">
               <span>Current Load:</span>
-              <span className="font-mono text-slate-900 font-bold">{currentSig?.current_ma ?? 1420} mA</span>
+              <span className="font-mono text-slate-900 font-bold">{currentSig?.current_ma ?? 0} mA</span>
             </div>
             <div className="flex justify-between text-slate-500">
               <span>Transient ΔI:</span>
-              <span className="font-mono text-slate-700 font-semibold">{currentSig?.current_delta_ma ?? -35.0} mA</span>
+              <span className="font-mono text-slate-700 font-semibold">{currentSig?.current_delta_ma ?? 0} mA</span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
-              <span className="font-extrabold text-purple-600">{((currentSig?.confidence ?? 0.857) * 100).toFixed(1)}%</span>
+              <span className="font-extrabold text-purple-600">{((currentSig?.confidence ?? 0) * 100).toFixed(1)}%</span>
             </div>
           </div>
         </div>
@@ -133,25 +149,25 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
             </div>
             <div className="flex justify-between text-slate-500">
               <span>Night Residual:</span>
-              <span className="font-mono text-slate-700 font-semibold">{mnf?.residual ?? 0.12} L/min</span>
+              <span className="font-mono text-slate-700 font-semibold">{mnf?.residual ?? 0} L/min</span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
-              <span className="font-extrabold text-amber-600">{((mnf?.confidence ?? 0.700) * 100).toFixed(1)}%</span>
+              <span className="font-extrabold text-amber-600">{((mnf?.confidence ?? 0) * 100).toFixed(1)}%</span>
             </div>
           </div>
         </div>
 
         {/* 4. CUSUM */}
         <div className={`bg-white border rounded-2xl p-5 shadow-xs transition ${
-          cusum?.is_alarm ?? true ? "border-emerald-300 bg-emerald-50/30" : "border-slate-200/80"
+          cusum?.is_alarm ?? false ? "border-emerald-300 bg-emerald-50/30" : "border-slate-200/80"
         }`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
               <Activity className="w-4 h-4 text-emerald-600" />
               <h3 className="text-sm font-bold text-slate-900">CUSUM Micro-Leak</h3>
             </div>
-            {(cusum?.is_alarm ?? true) ? (
+            {(cusum?.is_alarm ?? false) ? (
               <span className="text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">SUSPECT</span>
             ) : (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">OK</span>
@@ -160,15 +176,15 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           <div className="space-y-2 text-xs">
             <div className="flex justify-between text-slate-500">
               <span>Accumulated Score:</span>
-              <span className="font-mono text-slate-900 font-bold">{cusum?.score ?? 3.42}</span>
+              <span className="font-mono text-slate-900 font-bold">{cusum?.cusum_score ?? 0}</span>
             </div>
             <div className="flex justify-between text-slate-500">
               <span>Decision Threshold h:</span>
-              <span className="font-mono text-slate-700 font-semibold">3.00</span>
+              <span className="font-mono text-slate-700 font-semibold">{cusum?.threshold_h ?? 0}</span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
-              <span className="font-extrabold text-emerald-600">{((cusum?.confidence ?? 0.783) * 100).toFixed(1)}%</span>
+              <span className="font-extrabold text-emerald-600">{((cusum?.confidence ?? 0) * 100).toFixed(1)}%</span>
             </div>
           </div>
         </div>
@@ -181,7 +197,7 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           <span>Multi-Sensor Confidence Fusion Algorithm Weights</span>
         </h3>
         <p className="text-xs text-slate-500 mb-5 font-mono">
-          Confidence = 0.40 * C_MassBalance + 0.20 * C_Current + 0.20 * C_MNF + 0.20 * C_CUSUM
+          Confidence = 0.40 × C_MassBalance + 0.25 × C_Current + 0.20 × C_CUSUM + 0.15 × C_MNF
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
@@ -191,11 +207,11 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           </div>
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
             <div className="text-slate-500 font-medium">Motor Current Weight</div>
-            <div className="text-xl font-extrabold text-purple-600 mt-1">20%</div>
+            <div className="text-xl font-extrabold text-purple-600 mt-1">25%</div>
           </div>
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
             <div className="text-slate-500 font-medium">MNF Baseline Weight</div>
-            <div className="text-xl font-extrabold text-amber-600 mt-1">20%</div>
+            <div className="text-xl font-extrabold text-amber-600 mt-1">15%</div>
           </div>
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
             <div className="text-slate-500 font-medium">CUSUM Drift Weight</div>

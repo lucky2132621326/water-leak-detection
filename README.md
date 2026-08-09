@@ -1,149 +1,142 @@
-# Water Leak Detection System (Hardware-In-The-Loop & Analytics Workbench)
+# Smart Water Leak Detection
 
-A high-reliability, real-time water pipeline leak detection system combining physical test rig telemetry (ESP32), multi-algorithm sensor fusion (Mass Balance, Current Signature, CUSUM, MNF), explainable confidence evaluation, branch isolation localization, and a full-stack Web Workbench & Dashboard.
+An explainable hardware-in-the-loop platform for detecting and localizing
+probable water leaks from flow imbalance, pump-current signatures, CUSUM drift,
+and minimum-night-flow evidence.
 
----
+This is decision-support software: every result includes confidence, evidence,
+a false-positive warning, and a field-verification requirement. The dashboard
+does not expose operational pump or valve controls.
 
-## 🛠️ Prerequisites & Installation Requirements
+## What makes the system credible
 
-Before running the application or physical rig components, ensure the following prerequisites are installed on your environment:
+- One detection pipeline for ESP32 live telemetry and historical replay.
+- Exact raw pulse counts are stored beside converted flow values.
+- Four independent detectors feed a weighted sensor-fusion decision.
+- Leak likelihood, time window, suspected zone, and evidence are returned in a
+  stable API contract.
+- Physical leak start/stop is logged separately as millisecond-precision ground
+  truth for precision, recall, F1, and detection-latency measurement.
+- MQTT Last Will, device freshness, MongoDB health, and simulation/live state
+  are visible rather than replaced by plausible fake values.
+- Firmware safety is local: pumps boot OFF, incomplete commands are rejected,
+  and command/runtime watchdogs do not depend on the network.
 
-### 1. System Runtime Requirements
-* **Node.js**: `v18.x` or `v20.x` (LTS recommended)
-* **npm**: `v9.x` or higher
-* **Python**: `3.9+` (with `pip` package manager)
-* **MQTT Broker**: Mosquitto MQTT Broker (or compatible broker) running on port `1883`
-* **Database**: MongoDB instance (v6.0+ recommended) running on `mongodb://localhost:27017`
-* **Firmware (Optional for Physical Rig)**: PlatformIO CLI or Arduino IDE with ESP32 board support packages
+## Architecture
 
----
+```text
+ESP32 sensors (3× flow + INA219 + actuator state)
+                    │  MQTT / rig/telemetry @ 1 Hz
+                    ▼
+FastAPI ingestion → validation → MongoDB + JSONL evidence log
+                    │
+                    ├─ mass balance (bias + persistence)
+                    ├─ motor-current signature
+                    ├─ CUSUM change detection
+                    └─ minimum night flow
+                    │
+                    ▼
+       fusion → confidence → localization → work-order brief
+                    │
+                    ▼
+             React decision-support dashboard
+```
 
-## 📦 Installation Guide
+The physical topology is `recombined_branch`: Branch A and B rejoin before
+`Q_out`, so `Q_branch` is a localization/demand feature and is not subtracted a
+second time from the main mass balance. See
+[`docs/HARDWARE_INTEGRATION_SPEC.md`](docs/HARDWARE_INTEGRATION_SPEC.md).
 
-### Step 1: Install Node.js Dependencies (Dashboard & Server)
+## Quick start
 
-In the project root directory, run:
+Requirements: Node.js 18+, Python 3.9+, MongoDB, and (for live hardware or the
+mock MQTT stream) a Mosquitto-compatible broker on port 1883.
 
 ```bash
 npm install
+python -m pip install -r requirements.txt
+python scripts/init_db.py
 ```
 
-This installs Express, React 19, Recharts, Lucide React, Vite, Tailwind CSS, motion, tsx, and type declarations.
-
----
-
-### Step 2: Install Python Backend Dependencies
-
-Install the required Python packages using `requirements.txt`:
-
-```bash
-pip install -r requirements.txt
-```
-
-*Required Python libraries installed:*
-* `pyyaml`: Configuration parsing
-* `paho-mqtt`: MQTT communication client
-* `pymongo`: Database operations
-* `pydantic`: DTO schema validation
-* `numpy` / `scipy`: Numerical processing & analytics
-
----
-
-## 🚀 Running Commands
-
-### 1. System Self-Diagnostic Test
-Before starting the web app or connecting hardware, verify all backend modules (Config Loader, Telemetry Validator, Detector Engine, State Machine, Fusion & Confidence Engine, Localization Service):
-
-```bash
-python backend/self_test/system_self_test.py
-```
-
----
-
-### 2. Hardware Unit Test Scripts
-Test individual sensor and actuator interfaces:
-
-```bash
-# Test YF-S201 Flow Sensor #1 calculation logic
-python tests/test_flow1.py
-
-# Test INA219 Motor Current & Voltage sampling logic
-python tests/test_ina219.py
-
-# Test Servo Motor isolation PWM commands
-python tests/test_servo.py
-
-# Test Relay Pump toggle signals
-python tests/test_pump.py
-```
-
----
-
-### 3. Start Development Web Workbench (Full-Stack Express + Vite)
-
-To run the interactive live dashboard and backend proxy server:
+Start the Python detection API and React/Express application together:
 
 ```bash
 npm run dev
 ```
 
-* Access the live dashboard at: `http://localhost:3000`
-
----
-
-### 4. Build for Production
-
-To compile the React client assets and bundle `server.ts` into a standalone CommonJS bundle (`dist/server.cjs`):
+Open `http://localhost:3000`. A seeded `RUN_001` will replay automatically when
+it exists. To recreate the deterministic demo dataset first:
 
 ```bash
+npm run demo
+```
+
+Runtime values can be copied from `.env.example`. Defaults are FastAPI `8001`,
+web `3000`, MongoDB `27017`, and MQTT `1883`.
+
+## Verify before a demo
+
+```bash
+python -m pytest -q
+python backend/self_test/system_self_test.py
+npm run lint
 npm run build
 ```
 
----
+The Python suite covers the hardware-owner MQTT packet, legacy packet
+compatibility, topology-aware residuals, detector recovery, localization, and
+hardware calculation helpers.
 
-### 5. Start Production Server
+## ESP32 commissioning order
 
-Launch the compiled production bundle:
+1. Wire only Flow 1 to GPIO 34 through the required level divider.
+2. Flash `firmware/serial_test/serial_test.ino` and verify pulses once per
+   second before connecting Wi-Fi, MQTT, relays, or I2C.
+3. Copy `firmware/src/secrets.example.h` to the Git-ignored `secrets.h`; set the
+   demo Wi-Fi and the laptop's LAN address as `MQTT_BROKER`.
+4. Build and flash `firmware/` with PlatformIO.
+5. Verify retained `rig/status`, then inspect one `rig/telemetry` packet against
+   [`docs/MQTT_SPEC.md`](docs/MQTT_SPEC.md).
+6. Confirm both active-low pump relays boot OFF and the 30-second watchdog turns
+   them off without a fresh supervised command.
+7. Run a zero-leak calibration before trusting thresholds or latency metrics.
 
 ```bash
-npm run start
+pio run -d firmware
+pio run -d firmware --target upload
+pio device monitor -d firmware
 ```
 
----
+## Mock hardware stream
 
-## ⚙️ Configuration Setup
+The mock publisher uses the exact nested hardware schema and identifies itself
+as `mock-rig-01`, allowing the UI to remain visibly in simulation mode.
 
-System parameters and thresholds are dynamically configured in `backend/config/settings.yaml`:
-
-```yaml
-mqtt:
-  host: "localhost"
-  port: 1883
-  topic: "rig/telemetry"
-  cmd_topic: "rig/cmd"
-
-database:
-  uri: "mongodb://localhost:27017"
-  name: "water_leak_detection"
-
-detector:
-  sigma_multiplier: 3.0
-  persistence_seconds: 10
-  bias_lpm: 0.10
-  current_drop_threshold_ma: 20.0
-  cusum_slack_k: 0.15
-  cusum_decision_h: 3.0
+```bash
+python tools/mock_publisher.py --duration-s 120
+python tools/mock_publisher.py --leak-lpm 0.5 --leak-start-s 30 --leak-duration-s 45
 ```
 
----
+Mock frames are never counted as physical evidence in the independent live
+JSONL hardware log.
 
-## 🔌 Hardware Setup & Firmware Flashing
+## MQTT topics
 
-1. Connect ESP32 DevKit V1 to (see `docs/HARDWARE_SETUP.md` / `firmware/docs/PINOUT.md` — source of truth, matches `firmware/src/config.h`):
-   - **YF-S201 Flow Sensors**: GPIO 34 ($Q_{\text{in}}$), GPIO 35 ($Q_{\text{out}}$), GPIO 32 ($Q_{\text{branch}}$)
-   - **INA219 Current Sensor**: I2C SDA (GPIO 21) / SCL (GPIO 22)
-   - **Relays (Pump / Leak Solenoid)**: GPIO 25 & GPIO 26
-   - **Servo Isolation Actuator**: PWM GPIO 27
-   - No physical pressure sensor is installed; `pressure_bar` is estimated server-side from flow/pump state.
-2. Open `firmware/` in PlatformIO (`platformio.ini` targets `esp32dev`).
-3. `pio run --target upload` to flash, `pio device monitor` to view logs.
+- `rig/telemetry`: nested sensor frame at 1 Hz, QoS 1, not retained.
+- `rig/status`: device state/health, retained, with an `OFFLINE` Last Will.
+- `rig/cmd`: supervised lab-rig command containing all of `pump1`, `pump2`, and
+  `servo_deg`; firmware rejects partial commands.
+
+The canonical schemas are in [`docs/MQTT_SPEC.md`](docs/MQTT_SPEC.md). Network
+credentials live only in `firmware/src/secrets.h`, which is excluded from Git
+and from the dashboard's repository viewer.
+
+## Safety and interpretation
+
+- A high likelihood is not proof of a leak.
+- Field verification is required before repair or isolation work.
+- Estimated pressure is clearly tagged because the current rig has no pressure
+  transducer.
+- The public dashboard provides no operational valve-control instructions.
+- Physical ground-truth logging is enabled only when a fresh, non-mock ESP32
+  stream is active in live mode.

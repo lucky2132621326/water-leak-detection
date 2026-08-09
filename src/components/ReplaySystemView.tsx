@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { RotateCcw, Sliders, BarChart3 } from "lucide-react";
+import { RotateCcw, BarChart3 } from "lucide-react";
 
 export const ReplaySystemView: React.FC = () => {
   const [runs, setRuns] = useState<any[]>([]);
   const [selectedRun, setSelectedRun] = useState<string>("RUN_001");
-  const [sigma, setSigma] = useState<number>(3.0);
-  const [cusumH, setCusumH] = useState<number>(3.0);
   const [evalResult, setEvalResult] = useState<any>(null);
 
   useEffect(() => {
@@ -22,9 +20,8 @@ export const ReplaySystemView: React.FC = () => {
 
   useEffect(() => {
     if (!selectedRun) return;
-    // sigma/cusumH are shown as tuning controls but the actual replay score is
-    // computed from the real DetectionPipeline (backend/replay/replay_runner.py)
-    // against the selected run's stored telemetry + ground-truth leak events.
+    // The score is computed by the production DetectionPipeline against the
+    // selected run's stored telemetry and ground-truth leak events.
     fetch("/api/replay/evaluate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -43,10 +40,10 @@ export const ReplaySystemView: React.FC = () => {
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs">
         <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2 tracking-tight">
           <RotateCcw className="w-6 h-6 text-indigo-600" />
-          <span>Phase 2: Historical Telemetry Replay & Algorithm Benchmark Engine</span>
+          <span>Historical Replay & Benchmark</span>
         </h2>
         <p className="text-xs text-slate-500 mt-1">
-          Replay recorded experiment datasets (`RUN_001` - `RUN_012`) to evaluate Precision, Recall, F1-Score, and Latency without requiring hardware re-runs.
+          Re-run stored sensor frames through the production detection pipeline and score them against physical or synthetic ground truth.
         </p>
       </div>
 
@@ -90,50 +87,6 @@ export const ReplaySystemView: React.FC = () => {
 
         {/* Right: Parameter Tweak & Evaluation Metrics */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Slider controls */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-5">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-              <Sliders className="w-4 h-4 text-indigo-600" />
-              <span>Sensitivity Threshold Tuning</span>
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <div className="flex justify-between text-xs mb-2">
-                  <span className="text-slate-700 font-bold">Mass Balance Threshold (Sigma):</span>
-                  <span className="font-mono text-indigo-600 font-extrabold">{sigma.toFixed(1)} Sigma</span>
-                </div>
-                <input
-                  type="range"
-                  min="1.5"
-                  max="5.0"
-                  step="0.1"
-                  value={sigma}
-                  onChange={(e) => setSigma(parseFloat(e.target.value))}
-                  className="w-full accent-indigo-600 cursor-pointer"
-                />
-                <div className="text-[10px] text-slate-400 mt-1.5 font-medium">Lower Sigma increases recall; higher Sigma lowers false positives.</div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-xs mb-2">
-                  <span className="text-slate-700 font-bold">CUSUM Decision Threshold (h):</span>
-                  <span className="font-mono text-cyan-600 font-extrabold">{cusumH.toFixed(1)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="1.0"
-                  max="8.0"
-                  step="0.5"
-                  value={cusumH}
-                  onChange={(e) => setCusumH(parseFloat(e.target.value))}
-                  className="w-full accent-cyan-600 cursor-pointer"
-                />
-                <div className="text-[10px] text-slate-400 mt-1.5 font-medium">Controls accumulation required for micro-leak alarm trigger.</div>
-              </div>
-            </div>
-          </div>
-
           {/* Benchmark Evaluation Metrics */}
           {evalResult?.metrics && (
             <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-5">
