@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useState, useEffect } from "react";
 import { Sidebar, NavTab } from "./components/Sidebar";
 import { Header } from "./components/Header";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
-import type { SystemHealth, TelemetryEnvelope, TelemetrySample, AlertsSummary, SavingsSummary } from "./types";
+import type { SystemHealth, TelemetryEnvelope, TelemetrySample, AlertsSummary, SavingsSummary, RuntimeCapabilities } from "./types";
 
 const DashboardView = lazy(() => import("./components/DashboardView").then((module) => ({ default: module.DashboardView })));
 const LiveMonitorView = lazy(() => import("./components/LiveMonitorView").then((module) => ({ default: module.LiveMonitorView })));
@@ -28,6 +28,7 @@ export default function App() {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [savings, setSavings] = useState<SavingsSummary | null>(null);
   const [alertsSummary, setAlertsSummary] = useState<AlertsSummary | null>(null);
+  const [capabilities, setCapabilities] = useState<RuntimeCapabilities | null>(null);
 
   const fetchJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(url, init);
@@ -35,24 +36,28 @@ export default function App() {
     return response.json() as Promise<T>;
   };
 
-  // Fetch the three dashboard contracts together so every card represents the
-  // same observation window. A failed backend is surfaced in the UI.
-  const fetchState = async () => {
+  // Health/latest stay at 1Hz; history is refreshed separately at 5s so a
+  // group of judges does not multiply expensive history reads every second.
+  const fetchLiveState = async () => {
     try {
-      const [healthData, telemetryData, historyData] = await Promise.all([
+      const [healthData, telemetryData] = await Promise.all([
         fetchJson<SystemHealth>("/api/health"),
         fetchJson<TelemetryEnvelope>("/api/telemetry"),
-        fetchJson<TelemetrySample[]>("/api/telemetry/history"),
       ]);
       setHealth(healthData);
       setLatestTelemetry(telemetryData);
-      setTelemetryHistory(Array.isArray(historyData) ? historyData : []);
       if (healthData.mode === "live" || healthData.mode === "replay") setMode(healthData.mode);
       setConnectionError(null);
     } catch (error) {
       setConnectionError(error instanceof Error ? error.message : "Detection backend unavailable");
       setHealth((current) => current ? { ...current, status: "error" } : null);
     }
+  };
+
+  const fetchHistory = () => {
+    fetchJson<TelemetrySample[]>("/api/telemetry/history")
+      .then((data) => setTelemetryHistory(Array.isArray(data) ? data : []))
+      .catch(() => undefined);
   };
 
   // Savings and the alert badge change on operator action, not per sample, so
@@ -70,8 +75,17 @@ export default function App() {
   };
 
   useEffect(() => {
-    void fetchState();
-    const interval = setInterval(() => void fetchState(), 1000); // 1Hz live telemetry polling
+    fetchJson<RuntimeCapabilities>("/api/runtime-capabilities")
+      .then(setCapabilities)
+      .catch(() => setCapabilities({ audience: "operator", read_only: false, mutations_allowed: true }));
+    void fetchLiveState();
+    fetchHistory();
+    const interval = setInterval(() => void fetchLiveState(), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(fetchHistory, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -86,6 +100,7 @@ export default function App() {
   // with physical ground-truth logging; there is no /api/leak/toggle route
   // to call anymore.
   const activeAlertCount = alertsSummary?.counts.active ?? 0;
+  const readOnly = capabilities?.read_only ?? true;
 
   const handleToggleMode = () => {
     const nextMode = mode === "live" ? "replay" : "live";
@@ -108,6 +123,7 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         unreadAlertsCount={activeAlertCount}
+        readOnly={readOnly}
       />
 
       {/* 2. Main Right Container */}
@@ -124,10 +140,16 @@ export default function App() {
           onOpenAlerts={() => setActiveTab("alerts")}
           mode={mode}
           onToggleMode={handleToggleMode}
+          readOnly={readOnly}
         />
 
         {/* View Content Body */}
         <main className="flex-1 p-8 max-w-[1600px] w-full mx-auto">
+          {readOnly && capabilities?.audience === "judge" && (
+            <div className="mb-5 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-xs font-bold tracking-wide text-cyan-900">
+              LIVE JUDGE VIEW · READ-ONLY — telemetry and evidence are live; operator controls remain on the rig laptop.
+            </div>
+          )}
           {(mode === "replay" || health?.simulation_mode) && (
             <div className="mb-5 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs font-bold tracking-wide text-indigo-800">
               SIMULATION MODE — synthetic telemetry for validation; physical ESP32 integration is not the active data source.
@@ -155,7 +177,8 @@ export default function App() {
               onNavigateTab={setActiveTab}
               impact={latestTelemetry?.impact}
               savings={savings}
-              onAnalyzeImpact={() => setActiveTab("impact-simulator")}
+              onAnalyzeImpact={readOnly ? undefined : () => setActiveTab("impact-simulator")}
+              readOnly={readOnly}
             />
           )}
 
@@ -188,7 +211,7 @@ export default function App() {
 
           {activeTab === "reports" && <ReportsView />}
 
-          {activeTab === "alerts" && <AlertsView />}
+          {activeTab === "alerts" && <AlertsView readOnly={readOnly} />}
 
           {activeTab === "leak-history" && <LeakHistoryView />}
 

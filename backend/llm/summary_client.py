@@ -37,7 +37,7 @@ def _get_client():
     return _client
 
 
-def _template_summary(evidence: dict) -> str:
+def build_template_summary(evidence: dict) -> str:
     zone = evidence.get("zone", "UNKNOWN")
     likelihood = evidence.get("likelihood_score", 0)
     residual = evidence.get("residual_lpm", 0.0)
@@ -57,7 +57,7 @@ def generate_work_order_summary(evidence: dict) -> dict:
     """Returns {"summary": str, "source": "llm"|"template"}."""
     client = _get_client()
     if client is None:
-        return {"summary": _template_summary(evidence), "source": "template"}
+        return {"summary": build_template_summary(evidence), "source": "template"}
 
     prompt = (
         "You write concise field work-order summaries for a water utility crew. "
@@ -81,4 +81,4 @@ def generate_work_order_summary(evidence: dict) -> dict:
         return {"summary": text, "source": "llm"}
     except Exception as e:
         logger.warning(f"[LLM] Azure OpenAI call failed, falling back to template: {e}")
-        return {"summary": _template_summary(evidence), "source": "template"}
+        return {"summary": build_template_summary(evidence), "source": "template"}

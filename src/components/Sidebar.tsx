@@ -35,27 +35,29 @@ interface SidebarProps {
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
   unreadAlertsCount?: number;
+  readOnly?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   onSelectTab,
-  unreadAlertsCount = 0
+  unreadAlertsCount = 0,
+  readOnly = false,
 }) => {
-  const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
+  const allNavItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number; operatorOnly?: boolean }[] = [
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="w-5 h-5" /> },
     { id: "live-monitoring", label: "Live Monitoring", icon: <Radio className="w-5 h-5" /> },
-    { id: "experiment-control", label: "Experiment Control", icon: <FlaskConical className="w-5 h-5" /> },
+    { id: "experiment-control", label: "Experiment Control", icon: <FlaskConical className="w-5 h-5" />, operatorOnly: true },
     { id: "leak-detection", label: "Leak Detection", icon: <Droplets className="w-5 h-5" /> },
     { id: "localization", label: "Localization", icon: <MapPin className="w-5 h-5" /> },
-    { id: "impact-simulator", label: "Impact Simulator", icon: <Calculator className="w-5 h-5" /> },
-    { id: "replay", label: "Replay & Benchmark", icon: <RotateCcw className="w-5 h-5" /> },
+    { id: "impact-simulator", label: "Impact Simulator", icon: <Calculator className="w-5 h-5" />, operatorOnly: true },
+    { id: "replay", label: "Replay & Benchmark", icon: <RotateCcw className="w-5 h-5" />, operatorOnly: true },
     // "analytics" is intentionally not listed here — AnalyticsView is still
     // 100% hardcoded fake numbers (no fetch calls at all). Route stays
     // reachable via NavTab/App.tsx for when it's made real; don't add a
     // sidebar button until then.
-    { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" /> },
-    { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" /> },
+    { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" />, operatorOnly: true },
+    { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" />, operatorOnly: true },
     { id: "reports", label: "Reports", icon: <FileText className="w-5 h-5" /> },
     { id: "alerts", label: "Alert Center", icon: <Bell className="w-5 h-5" />, badge: unreadAlertsCount },
     { id: "leak-history", label: "Leak History", icon: <History className="w-5 h-5" /> },
@@ -64,6 +66,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     // even though real /api/calibration endpoints exist now (CalibrationView
     // covers that ground for real). Route stays reachable, just no button.
   ];
+  const navItems = allNavItems.filter((item) => !readOnly || !item.operatorOnly);
 
   return (
     <aside className="w-64 bg-[#0B132B] text-slate-300 flex flex-col min-h-screen sticky top-0 z-30 border-r border-slate-800/80 shrink-0 select-none">

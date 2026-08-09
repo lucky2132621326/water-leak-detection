@@ -22,6 +22,7 @@ import time
 from backend.config.config_loader import impact_loader
 from backend.impact.impact_service import ImpactService
 from backend.impact.water_loss import WaterLossCalculator
+from backend.llm.summary_client import build_template_summary
 from backend.utils.logger import logger
 
 ALERT_STATUSES = ("ACTIVE", "RESOLVED", "FALSE_POSITIVE")
@@ -183,6 +184,7 @@ class AlertService:
             "peak_leak_rate_lpm": round(rate, 3),
             "evidence": response.get("evidence") or "",
             "active_methods": list(response.get("active_methods") or []),
+            "pressure_bar": (response.get("pressure") or {}).get("pressure_bar"),
             "false_positive_warning": response.get("false_positive_warning"),
             "work_order_summary": response.get("work_order_summary"),
             "impact": self.impact.summarize(rate),
@@ -204,6 +206,8 @@ class AlertService:
         return alert
 
     def _update(self, alert, response, ts, rate):
+        incoming_likelihood = float(response.get("likelihood_score") or 0.0)
+        stronger_evidence = incoming_likelihood > float(alert.get("likelihood_score") or 0.0)
         alert["last_seen_ts"] = ts
         alert["duration_sec"] = round(max(0.0, ts - alert["start_ts"]), 1)
         alert["sample_count"] += 1
@@ -217,14 +221,32 @@ class AlertService:
             alert["peak_leak_rate_lpm"] = round(rate, 3)
             alert["impact"] = self.impact.summarize(rate)
 
-        if (response.get("likelihood_score") or 0.0) > alert["likelihood_score"]:
-            alert["likelihood_score"] = response["likelihood_score"]
+        if stronger_evidence:
+            alert["likelihood_score"] = incoming_likelihood
             alert["confidence_tier"] = response.get("confidence_tier") or alert["confidence_tier"]
 
-        if response.get("work_order_summary"):
-            alert["work_order_summary"] = response["work_order_summary"]
         if response.get("zone") and response["zone"] != "NONE":
             alert["zone"] = response["zone"]
+        pressure_bar = (response.get("pressure") or {}).get("pressure_bar")
+        if pressure_bar is not None:
+            alert["pressure_bar"] = pressure_bar
+
+        incoming_work_order = response.get("work_order_summary") or {}
+        stored_work_order = alert.get("work_order_summary") or {}
+        if stronger_evidence and incoming_work_order.get("source") == "llm":
+            alert["work_order_summary"] = incoming_work_order
+        elif stored_work_order.get("source") != "llm":
+            summary_evidence = {
+                "zone": alert.get("zone") or "UNKNOWN",
+                "likelihood_score": alert.get("likelihood_score") or 0.0,
+                "residual_lpm": alert.get("leak_rate_lpm") or 0.0,
+                "active_methods": alert.get("active_methods") or [],
+                "pressure_bar": alert.get("pressure_bar"),
+            }
+            alert["work_order_summary"] = {
+                "summary": build_template_summary(summary_evidence),
+                "source": "template",
+            }
 
         self._persist(alert)
         return alert

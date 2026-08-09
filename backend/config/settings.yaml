@@ -4,6 +4,10 @@ mqtt:
   topic: "rig/telemetry"
   status_topic: "rig/status"
   cmd_topic: "rig/cmd"
+  # Prefer MQTT_USERNAME/MQTT_PASSWORD environment variables. Empty values
+  # retain compatibility with a commissioning-only anonymous broker.
+  username: ""
+  password: ""
 
 database:
   uri: "mongodb://localhost:27017"

@@ -162,6 +162,10 @@ def run_subscriber(ingestor: LiveTelemetryIngestor = None, blocking=True):
     port = config_loader.get("mqtt.port", 1883)
 
     client = mqtt.Client(userdata=ingestor)
+    username = config_loader.get("mqtt.username", "")
+    password = config_loader.get("mqtt.password", "")
+    if username:
+        client.username_pw_set(username, password)
     client.on_connect = _on_connect
     client.on_message = _on_message
 

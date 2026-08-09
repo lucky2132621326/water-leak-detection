@@ -5,6 +5,16 @@
 // Copy secrets.example.h to secrets.h and set the rig Wi-Fi + broker address.
 #include "secrets.h"
 
+// Existing commissioning secrets.h files from hardware spec v1 may not have
+// broker credentials yet. Empty fallbacks keep them build-compatible; the
+// public-demo MQTT guide requires real values before using the rig network.
+#ifndef MQTT_USERNAME
+#define MQTT_USERNAME ""
+#endif
+#ifndef MQTT_PASSWORD
+#define MQTT_PASSWORD ""
+#endif
+
 // MQTT Configuration
 #define MQTT_PORT 1883
 #define MQTT_TOPIC_TELEMETRY "rig/telemetry"

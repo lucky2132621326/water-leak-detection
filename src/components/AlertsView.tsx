@@ -25,7 +25,7 @@ const TABS: { id: StatusFilter; label: string; countKey: keyof AlertsSummary["co
  * live or replay pipeline, with its quantified impact attached. Dispositioning
  * an alert here is what feeds the Water Savings counter.
  */
-export const AlertsView: React.FC = () => {
+export const AlertsView: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }) => {
   const [tab, setTab] = useState<StatusFilter>("ACTIVE");
   const [alerts, setAlerts] = useState<LeakAlert[]>([]);
   const [summary, setSummary] = useState<AlertsSummary | null>(null);
@@ -96,7 +96,9 @@ export const AlertsView: React.FC = () => {
             </h2>
             <p className="text-xs text-slate-500 mt-1 max-w-2xl">
               Leak incidents raised by the detection pipeline, with quantified water and cost impact.
-              Dispositioning an incident feeds the water-savings KPI.
+              {readOnly
+                ? "This judge-facing view is read-only; incident disposition remains with the local operator."
+                : "Dispositioning an incident feeds the water-savings KPI."}
             </p>
           </div>
 
@@ -139,7 +141,7 @@ export const AlertsView: React.FC = () => {
         ) : (
           <div className="space-y-4">
             {alerts.map((a) => (
-              <AlertRow key={a.alert_id} alert={a} busy={busyId === a.alert_id} onAct={act} />
+              <AlertRow key={a.alert_id} alert={a} busy={busyId === a.alert_id} onAct={act} readOnly={readOnly} />
             ))}
           </div>
         )}
@@ -172,7 +174,8 @@ const AlertRow: React.FC<{
   alert: LeakAlert;
   busy: boolean;
   onAct: (id: string, action: "resolve" | "false-positive" | "reopen") => void;
-}> = ({ alert, busy, onAct }) => {
+  readOnly?: boolean;
+}> = ({ alert, busy, onAct, readOnly = false }) => {
   const sev = severityStyle(alert.impact?.severity);
   const st = statusStyle(alert.status);
   const urg = urgencyStyle(alert.impact?.urgency);
@@ -220,7 +223,7 @@ const AlertRow: React.FC<{
         </div>
 
         {/* Actions */}
-        <div className="flex items-center space-x-2 shrink-0">
+        {!readOnly && <div className="flex items-center space-x-2 shrink-0">
           {alert.status === "ACTIVE" ? (
             <>
               <button
@@ -250,7 +253,7 @@ const AlertRow: React.FC<{
               <span>Reopen</span>
             </button>
           )}
-        </div>
+        </div>}
       </div>
 
       {/* Impact strip */}

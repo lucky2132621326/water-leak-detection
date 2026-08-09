@@ -19,7 +19,7 @@ class ConfigLoader:
     def load_config(self, filepath: str = "backend/config/settings.yaml"):
         if os.path.exists(filepath):
             try:
-                with open(filepath, 'r') as f:
+                with open(filepath, 'r', encoding='utf-8') as f:
                     self._config = yaml.safe_load(f)
                     logger.info(f"Loaded dynamic configuration from {filepath}")
             except Exception as e:
@@ -48,6 +48,8 @@ class ConfigLoader:
         env_overrides = {
             "mqtt.host": "MQTT_HOST",
             "mqtt.port": "MQTT_PORT",
+            "mqtt.username": "MQTT_USERNAME",
+            "mqtt.password": "MQTT_PASSWORD",
             "database.uri": "MONGO_URI",
             "database.name": "MONGO_DB_NAME",
         }
@@ -83,7 +85,7 @@ class ThresholdsLoader:
 
     def load(self, filepath: str = "backend/config/thresholds.yaml"):
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 self._thresholds = yaml.safe_load(f)
                 logger.info(f"Loaded detector thresholds from {filepath}")
         except Exception as e:
@@ -124,7 +126,7 @@ class ImpactLoader:
 
     def load(self, filepath: str = "backend/config/impact.yaml"):
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 self._impact = yaml.safe_load(f)
                 logger.info(f"Loaded impact configuration from {filepath}")
         except Exception as e:

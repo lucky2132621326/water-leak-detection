@@ -14,7 +14,7 @@ class CalibrationRepository:
     def load_calibration(self):
         if os.path.exists(self.filepath):
             try:
-                with open(self.filepath, 'r') as f:
+                with open(self.filepath, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"Failed to load calibration data from {self.filepath}: {e}")
@@ -44,7 +44,7 @@ class CalibrationRepository:
     def save_calibration(self, calibration_dict: dict):
         self.data.update(calibration_dict)
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-        with open(self.filepath, 'w') as f:
+        with open(self.filepath, 'w', encoding='utf-8') as f:
             json.dump(self.data, f, indent=2)
         logger.info(f"Updated calibration repository at {self.filepath}")
 

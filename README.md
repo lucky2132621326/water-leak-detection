@@ -200,6 +200,16 @@ npm run start
 npm run demo
 ```
 
+## Temporary judge deployment
+
+`npm run demo:public` creates a hybrid hackathon deployment: the rig stack
+stays on this laptop, a local operator dashboard remains on port 3000, and a
+second read-only judge dashboard is exposed through a temporary Cloudflare
+Quick Tunnel. If MQTT is unavailable it remains honestly in Replay mode.
+
+See [`docs/PUBLIC_DEMO_DEPLOYMENT.md`](docs/PUBLIC_DEMO_DEPLOYMENT.md) for
+the security boundary, private-broker setup, and launch checklist.
+
 Runtime values can be copied from `.env.example`. Defaults are FastAPI
 `8001`, web `3000`, MongoDB `27017`, and MQTT `1883`.
 

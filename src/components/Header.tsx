@@ -8,6 +8,7 @@ interface HeaderProps {
   onOpenAlerts?: () => void;
   mode?: "live" | "replay";
   onToggleMode?: () => void;
+  readOnly?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,7 +17,8 @@ export const Header: React.FC<HeaderProps> = ({
   unreadCount = 3,
   onOpenAlerts,
   mode = "replay",
-  onToggleMode
+  onToggleMode,
+  readOnly = false,
 }) => {
   const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
@@ -66,7 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Right Header Controls: Live Clock, Notifications, Profile */}
       <div className="flex items-center space-x-6">
         {/* Live/Replay data-source toggle — same UI/detection pipeline either way */}
-        {onToggleMode && (
+        {onToggleMode && !readOnly && (
           <button
             onClick={onToggleMode}
             title="Switch between live rig telemetry and replayed historical runs"
@@ -103,13 +105,13 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </button>
 
-        {/* User Profile Avatar */}
+        {/* Runtime identity */}
         <div className="flex items-center space-x-2.5 cursor-pointer pl-2 border-l border-slate-200">
           <div className="w-9 h-9 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center shadow-xs">
-            AD
+            {readOnly ? "JV" : "AD"}
           </div>
-          <span className="text-sm font-semibold text-slate-800">Admin</span>
-          <ChevronDown className="w-4 h-4 text-slate-400" />
+          <span className="text-sm font-semibold text-slate-800">{readOnly ? "Judge View" : "Operator"}</span>
+          {!readOnly && <ChevronDown className="w-4 h-4 text-slate-400" />}
         </div>
       </div>
     </header>

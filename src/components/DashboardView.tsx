@@ -128,6 +128,7 @@ interface DashboardViewProps {
   impact?: ImpactSummary | null;
   savings?: SavingsSummary | null;
   onAnalyzeImpact?: () => void;
+  readOnly?: boolean;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -138,7 +139,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigateTab,
   impact,
   savings,
-  onAnalyzeImpact
+  onAnalyzeImpact,
+  readOnly = false
 }) => {
   const latest = latestTelemetry?.latest;
   const evaluation = latestTelemetry?.evaluation;
@@ -349,12 +351,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-slate-900 tracking-tight">Active Data Session</h3>
-              <button 
-                onClick={() => onNavigateTab("experiment-control")}
-                className="text-xs font-bold text-blue-600 hover:text-blue-700 transition"
-              >
-                View All
-              </button>
+              {!readOnly && (
+                <button
+                  onClick={() => onNavigateTab("experiment-control")}
+                  className="text-xs font-bold text-blue-600 hover:text-blue-700 transition"
+                >
+                  View All
+                </button>
+              )}
             </div>
 
             <div className="space-y-3">

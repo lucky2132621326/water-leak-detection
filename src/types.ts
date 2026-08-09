@@ -41,6 +41,12 @@ export interface SystemHealth {
   message?: string;
 }
 
+export interface RuntimeCapabilities {
+  audience: "operator" | "judge";
+  read_only: boolean;
+  mutations_allowed: boolean;
+}
+
 export interface TelemetryEnvelope {
   mode: "live" | "replay";
   latest: TelemetrySample | null;

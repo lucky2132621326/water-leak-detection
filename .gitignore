@@ -15,3 +15,4 @@ venv/
 firmware/src/secrets.h
 data/
 backend/calibration/calibration_data.json
+.tools/

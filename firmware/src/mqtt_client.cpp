@@ -39,7 +39,7 @@ void MQTTHandler::connectWiFi(const char* ssid, const char* password) {
 void MQTTHandler::connectMQTT(const char* broker, int port, const char* clientID) {
     client.setServer(broker, port);
     client.setCallback(staticMessageCallback);
-    client.setBufferSize(768);
+    client.setBufferSize(1024);
     deviceId = clientID;
     reconnect();
 }
@@ -51,7 +51,16 @@ void MQTTHandler::reconnect() {
     Serial.printf("[MQTT] Connecting to broker as %s...\n", deviceId);
     char lastWill[128];
     snprintf(lastWill, sizeof(lastWill), "{\"device\":\"%s\",\"status\":\"OFFLINE\"}", deviceId);
-    if (client.connect(deviceId, MQTT_TOPIC_STATUS, 1, true, lastWill)) {
+    bool connected = false;
+    if (strlen(MQTT_USERNAME) > 0) {
+        connected = client.connect(
+            deviceId, MQTT_USERNAME, MQTT_PASSWORD,
+            MQTT_TOPIC_STATUS, 1, true, lastWill
+        );
+    } else {
+        connected = client.connect(deviceId, MQTT_TOPIC_STATUS, 1, true, lastWill);
+    }
+    if (connected) {
         Serial.println("[MQTT] Connected");
         client.subscribe(MQTT_TOPIC_CMD);
         char online[128];
@@ -157,7 +166,12 @@ void MQTTHandler::publishTelemetry(unsigned long ts, uint32_t seq, float qIn, fl
     size_t n = serializeJson(doc, buf);
 
     if (client.connected()) {
-        client.publish(MQTT_TOPIC_TELEMETRY, buf, n);
+        client.publish(
+            MQTT_TOPIC_TELEMETRY,
+            reinterpret_cast<const uint8_t*>(buf),
+            n,
+            false
+        );
     } else {
         Serial.printf("[Telemetry] (offline) Qin: %.2f | Qout: %.2f | Qbr: %.2f | I: %.1fmA\n", qIn, qOut, qBranch, currentMA);
     }
@@ -174,6 +188,11 @@ void MQTTHandler::publishStatus(int wifiRssi, unsigned long uptimeSec, uint32_t 
     char buf[192];
     size_t n = serializeJson(doc, buf);
     if (client.connected()) {
-        client.publish(MQTT_TOPIC_STATUS, buf, n, true);
+        client.publish(
+            MQTT_TOPIC_STATUS,
+            reinterpret_cast<const uint8_t*>(buf),
+            n,
+            true
+        );
     }
 }

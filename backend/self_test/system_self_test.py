@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 if sys.stdout.encoding is None or sys.stdout.encoding.lower() != "utf-8":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from backend.config.config_loader import ConfigLoader
+from backend.config.config_loader import ConfigLoader, thresholds_loader
 from backend.validators.telemetry_validator import TelemetryValidator
 from backend.calibration.calibration_repository import CalibrationRepository
 from backend.detectors.detector_manager import DetectorManager
@@ -35,8 +35,10 @@ def run_self_test():
     print("\n[1/6] Testing Configuration Loader...")
     cfg = ConfigLoader()
     mqtt_host = cfg.get("mqtt.host", "localhost")
+    sigma_multiplier = thresholds_loader.get("mass_balance.sigma_threshold")
+    assert isinstance(sigma_multiplier, (int, float)) and sigma_multiplier > 0, "Mass-balance sigma threshold is missing or invalid"
     print(f"  ✓ MQTT Host: {mqtt_host}")
-    print(f"  ✓ Sigma Multiplier: {cfg.get('detector.sigma_multiplier')}")
+    print(f"  ✓ Sigma Multiplier: {sigma_multiplier}")
 
     # 2. Test Calibration Repository
     print("\n[2/6] Testing Calibration Repository...")
