@@ -56,7 +56,9 @@ class WorkOrderRepository:
         self.db = db if db is not None else get_db()
 
     def list_all(self):
-        return list(self.db.work_orders.find().sort("scheduled_start", -1))
+        # Project out _id — ObjectId is not JSON-serializable and these rows go
+        # straight out over the API.
+        return list(self.db.work_orders.find({}, {"_id": 0}).sort("scheduled_start", -1))
 
     def insert(self, work_order: dict):
         self.db.work_orders.insert_one(work_order)

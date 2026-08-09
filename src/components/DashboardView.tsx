@@ -24,7 +24,8 @@ import {
   Tooltip,
   CartesianGrid
 } from "recharts";
-import type { SystemHealth, TelemetryEnvelope, TelemetrySample } from "../types";
+import { ImpactSummaryStrip } from "./ImpactSummaryStrip";
+import type { SystemHealth, TelemetryEnvelope, TelemetrySample, ImpactSummary, SavingsSummary } from "../types";
 
 const formatUptime = (seconds?: number | null) => {
   if (seconds == null) return "Awaiting device status";
@@ -124,6 +125,9 @@ interface DashboardViewProps {
   latestTelemetry?: TelemetryEnvelope | null;
   telemetryHistory?: TelemetrySample[];
   onNavigateTab: (tab: any) => void;
+  impact?: ImpactSummary | null;
+  savings?: SavingsSummary | null;
+  onAnalyzeImpact?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -132,6 +136,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   latestTelemetry,
   telemetryHistory = [],
   onNavigateTab,
+  impact,
+  savings,
+  onAnalyzeImpact
 }) => {
   const latest = latestTelemetry?.latest;
   const evaluation = latestTelemetry?.evaluation;
@@ -245,6 +252,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 1b. Impact strip — translates the current leak rate into litres, rupees
+             and a severity category, plus the cumulative savings KPI. */}
+      <ImpactSummaryStrip impact={impact} savings={savings} onAnalyzeImpact={onAnalyzeImpact} />
 
       {/* 2. Middle Grid: System Overview (65%) & Active Exp + Detector Status (35%) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

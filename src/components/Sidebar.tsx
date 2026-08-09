@@ -12,7 +12,9 @@ import {
   FileText,
   Bell,
   Settings,
-  Droplet
+  Droplet,
+  Calculator,
+  History
 } from "lucide-react";
 
 export type NavTab =
@@ -21,12 +23,14 @@ export type NavTab =
   | "experiment-control"
   | "leak-detection"
   | "localization"
+  | "impact-simulator"
   | "replay"
   | "analytics"
   | "calibration"
   | "work-orders"
   | "reports"
   | "alerts"
+  | "leak-history"
   | "settings";
 
 interface SidebarProps {
@@ -46,10 +50,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "experiment-control", label: "Experiment Control", icon: <FlaskConical className="w-5 h-5" /> },
     { id: "leak-detection", label: "Leak Detection", icon: <Droplets className="w-5 h-5" /> },
     { id: "localization", label: "Localization", icon: <MapPin className="w-5 h-5" /> },
+    { id: "impact-simulator", label: "Impact Simulator", icon: <Calculator className="w-5 h-5" /> },
     { id: "replay", label: "Replay & Benchmark", icon: <RotateCcw className="w-5 h-5" /> },
+    { id: "analytics", label: "Analytics", icon: <BarChart3 className="w-5 h-5" /> },
     { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" /> },
     { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" /> },
-    { id: "alerts", label: "Alerts", icon: <Bell className="w-5 h-5" />, badge: unreadAlertsCount },
+    { id: "reports", label: "Reports", icon: <FileText className="w-5 h-5" /> },
+    { id: "alerts", label: "Alert Center", icon: <Bell className="w-5 h-5" />, badge: unreadAlertsCount },
+    { id: "leak-history", label: "Leak History", icon: <History className="w-5 h-5" /> },
+    { id: "settings", label: "Settings", icon: <Settings className="w-5 h-5" /> }
   ];
 
   return (

@@ -20,6 +20,7 @@ from backend.repositories.detection_repository import DetectionRepository
 from backend.repositories.file_logger import log_frame
 from backend.pipeline import DetectionPipeline
 from backend.response.response_builder import build_response
+from backend.alerts.alert_service import get_alert_service
 from backend.utils.logger import logger
 
 
@@ -102,6 +103,8 @@ class LiveTelemetryIngestor:
             "device_ts": normalized.get("device_ts"),
         })
         self.detection_repo.save_response(response, run_id=None)
+        # Roll this sample into the operator-facing incident list (Alert Center).
+        get_alert_service().ingest(response, source="live", run_id=None)
 
         # Log every real frame to a flat file too, independent of Mongo and
         # independent of whatever the dashboard is currently displaying — so

@@ -1,7 +1,8 @@
 import React, { lazy, Suspense, useState, useEffect } from "react";
 import { Sidebar, NavTab } from "./components/Sidebar";
 import { Header } from "./components/Header";
-import type { SystemHealth, TelemetryEnvelope, TelemetrySample } from "./types";
+import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
+import type { SystemHealth, TelemetryEnvelope, TelemetrySample, AlertsSummary, SavingsSummary } from "./types";
 
 const DashboardView = lazy(() => import("./components/DashboardView").then((module) => ({ default: module.DashboardView })));
 const LiveMonitorView = lazy(() => import("./components/LiveMonitorView").then((module) => ({ default: module.LiveMonitorView })));
@@ -15,6 +16,8 @@ const ReplaySystemView = lazy(() => import("./components/ReplaySystemView").then
 const ReportsView = lazy(() => import("./components/ReportsView").then((module) => ({ default: module.ReportsView })));
 const AlertsView = lazy(() => import("./components/AlertsView").then((module) => ({ default: module.AlertsView })));
 const SettingsView = lazy(() => import("./components/SettingsView").then((module) => ({ default: module.SettingsView })));
+const ImpactSimulatorView = lazy(() => import("./components/ImpactSimulatorView").then((module) => ({ default: module.ImpactSimulatorView })));
+const LeakHistoryView = lazy(() => import("./components/LeakHistoryView").then((module) => ({ default: module.LeakHistoryView })));
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
@@ -23,6 +26,8 @@ export default function App() {
   const [telemetryHistory, setTelemetryHistory] = useState<TelemetrySample[]>([]);
   const [mode, setMode] = useState<"live" | "replay">("replay");
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [savings, setSavings] = useState<SavingsSummary | null>(null);
+  const [alertsSummary, setAlertsSummary] = useState<AlertsSummary | null>(null);
 
   const fetchJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(url, init);
@@ -50,11 +55,37 @@ export default function App() {
     }
   };
 
+  // Savings and the alert badge change on operator action, not per sample, so
+  // they poll far slower than telemetry.
+  const fetchImpactState = () => {
+    fetch("/api/savings")
+      .then((res) => res.json())
+      .then(setSavings)
+      .catch(() => undefined);
+
+    fetch("/api/alerts/summary")
+      .then((res) => res.json())
+      .then(setAlertsSummary)
+      .catch(() => undefined);
+  };
+
   useEffect(() => {
     void fetchState();
     const interval = setInterval(() => void fetchState(), 1000); // 1Hz live telemetry polling
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    fetchImpactState();
+    const interval = setInterval(fetchImpactState, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Leak injection is intentionally not wired here — the hardware spec
+  // (docs/HARDWARE_INTEGRATION_SPEC.md §8) replaced software leak injection
+  // with physical ground-truth logging; there is no /api/leak/toggle route
+  // to call anymore.
+  const activeAlertCount = alertsSummary?.counts.active ?? 0;
 
   const handleToggleMode = () => {
     const nextMode = mode === "live" ? "replay" : "live";
@@ -76,7 +107,7 @@ export default function App() {
       <Sidebar
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        unreadAlertsCount={latestTelemetry?.evaluation?.is_alarm ? 1 : 0}
+        unreadAlertsCount={activeAlertCount}
       />
 
       {/* 2. Main Right Container */}
@@ -89,7 +120,7 @@ export default function App() {
               ? (health?.device?.online ? "Rig online" : "Waiting for rig")
               : (health?.data_source_ready ? "Replay ready" : "Replay unavailable")
           }
-          unreadCount={latestTelemetry?.evaluation?.is_alarm ? 1 : 0}
+          unreadCount={activeAlertCount}
           onOpenAlerts={() => setActiveTab("alerts")}
           mode={mode}
           onToggleMode={handleToggleMode}
@@ -107,6 +138,9 @@ export default function App() {
               Detection service connection lost. Showing the last verified sample. ({connectionError})
             </div>
           )}
+          {/* Keyed on the active tab so navigating away from a failed view clears
+              the error rather than stranding the operator on it. */}
+          <ViewErrorBoundary resetKey={activeTab}>
           <Suspense fallback={(
             <div className="h-64 rounded-2xl border border-slate-200 bg-white flex items-center justify-center text-sm font-semibold text-slate-500">
               Loading intelligence module…
@@ -119,6 +153,9 @@ export default function App() {
               latestTelemetry={latestTelemetry}
               telemetryHistory={telemetryHistory}
               onNavigateTab={setActiveTab}
+              impact={latestTelemetry?.impact}
+              savings={savings}
+              onAnalyzeImpact={() => setActiveTab("impact-simulator")}
             />
           )}
 
@@ -139,6 +176,8 @@ export default function App() {
 
           {activeTab === "localization" && <LocalizationView />}
 
+          {activeTab === "impact-simulator" && <ImpactSimulatorView />}
+
           {activeTab === "replay" && <ReplaySystemView />}
 
           {activeTab === "analytics" && <AnalyticsView />}
@@ -149,10 +188,13 @@ export default function App() {
 
           {activeTab === "reports" && <ReportsView />}
 
-          {activeTab === "alerts" && <AlertsView evaluation={latestTelemetry?.evaluation || null} />}
+          {activeTab === "alerts" && <AlertsView />}
+
+          {activeTab === "leak-history" && <LeakHistoryView />}
 
           {activeTab === "settings" && <SettingsView />}
           </Suspense>
+          </ViewErrorBoundary>
         </main>
       </div>
     </div>

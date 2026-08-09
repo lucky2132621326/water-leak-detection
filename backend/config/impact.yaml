@@ -1,0 +1,50 @@
+# Impact Analysis Configuration
+#
+# Tariff and severity bands used by backend/impact/*. Kept separate from
+# settings.yaml (infra) and thresholds.yaml (detector tuning) for the same
+# reason those two are separate: a utility operator changing the water tariff
+# should never be editing MQTT hosts or 3-sigma multipliers.
+
+tariff:
+  currency_symbol: "₹"
+  # Municipal volumetric charge. Indian urban slab rates commonly land in the
+  # ₹15-30 per kilolitre range; 20 is a mid-slab default.
+  rate_per_kilolitre: 20.0
+
+severity_bands:
+  # Upper bound (L/min, exclusive) -> label. Ordered ascending; anything above
+  # the last band's max falls through to `critical_label`.
+  - { max_lpm: 0.2, label: "MINOR" }
+  - { max_lpm: 0.5, label: "MODERATE" }
+  - { max_lpm: 1.0, label: "MAJOR" }
+critical_label: "CRITICAL"
+
+equivalents:
+  # Relatable reference volumes used to translate litres into something a
+  # non-engineer can picture.
+  tank_litres: 200            # a common domestic overhead tank
+  person_daily_litres: 135    # CPHEEO norm for Indian urban per-capita supply
+  bucket_litres: 20
+
+recommendation:
+  # Monthly-loss thresholds (litres) that drive the repair-urgency advice.
+  immediate_lpm: 1.0
+  urgent_lpm: 0.5
+  scheduled_lpm: 0.2
+
+progression:
+  # Repair-delay options offered by the "what if we ignore it?" simulator.
+  delay_options_days: [1, 7, 30, 90, 365]
+  default_delay_days: 30
+
+savings:
+  # When a leak is marked repaired, the water it would have kept losing is
+  # counted as "prevented" over this horizon. 30 days is a conservative,
+  # defensible window — long enough to be meaningful, short enough that the
+  # savings figure isn't an unfalsifiable annualised claim.
+  prevented_horizon_days: 30
+
+alerts:
+  # Consecutive alarm samples closer together than this are merged into one
+  # incident, so a flickering detector produces one alert rather than hundreds.
+  merge_gap_sec: 30

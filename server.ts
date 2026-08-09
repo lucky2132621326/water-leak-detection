@@ -27,7 +27,8 @@ async function startServer() {
   // either way). Node no longer generates or evaluates telemetry itself.
   async function proxyToFastApi(req: express.Request, res: express.Response, fastApiPath: string) {
     try {
-      const url = `${FASTAPI_BASE_URL}${fastApiPath}`;
+      const query = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
+      const url = `${FASTAPI_BASE_URL}${fastApiPath}${query}`;
       const init: RequestInit = {
         method: req.method,
         headers: { "Content-Type": "application/json" },
@@ -37,6 +38,16 @@ async function startServer() {
         init.body = JSON.stringify(req.body ?? {});
       }
       const upstream = await fetch(url, init);
+
+      // The printable experiment report comes back as HTML, not JSON — pass it
+      // through verbatim so it can be opened in a tab and saved as a PDF.
+      const contentType = upstream.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        const text = await upstream.text();
+        res.status(upstream.status).type(contentType || "text/plain").send(text);
+        return;
+      }
+
       const data = await upstream.json();
       res.status(upstream.status).json(data);
     } catch (e) {
@@ -48,6 +59,8 @@ async function startServer() {
     }
   }
 
+  // Static one-to-one proxies. Paths with :params are registered separately
+  // below because the upstream path has to be rebuilt from req.params.
   const PROXIED_ROUTES: Array<{ method: "get" | "post"; path: string }> = [
     { method: "get", path: "/api/health" },
     { method: "get", path: "/api/mode" },
@@ -64,10 +77,28 @@ async function startServer() {
     { method: "get", path: "/api/localization/current" },
     { method: "get", path: "/api/work-orders" },
     { method: "post", path: "/api/work-orders/dispatch" },
+    { method: "get", path: "/api/impact/config" },
+    { method: "get", path: "/api/impact/current" },
+    { method: "post", path: "/api/impact/simulate" },
+    { method: "get", path: "/api/alerts" },
+    { method: "get", path: "/api/alerts/summary" },
+    { method: "get", path: "/api/savings" },
   ];
 
   for (const route of PROXIED_ROUTES) {
     app[route.method](route.path, (req, res) => proxyToFastApi(req, res, route.path));
+  }
+
+  const PARAM_ROUTES: Array<{ method: "get" | "post"; path: string; upstream: (p: any) => string }> = [
+    { method: "post", path: "/api/alerts/:alertId/resolve", upstream: (p) => `/api/alerts/${encodeURIComponent(p.alertId)}/resolve` },
+    { method: "post", path: "/api/alerts/:alertId/false-positive", upstream: (p) => `/api/alerts/${encodeURIComponent(p.alertId)}/false-positive` },
+    { method: "post", path: "/api/alerts/:alertId/reopen", upstream: (p) => `/api/alerts/${encodeURIComponent(p.alertId)}/reopen` },
+    { method: "get", path: "/api/reports/experiment/:runId", upstream: (p) => `/api/reports/experiment/${encodeURIComponent(p.runId)}` },
+    { method: "get", path: "/api/reports/experiment/:runId/html", upstream: (p) => `/api/reports/experiment/${encodeURIComponent(p.runId)}/html` },
+  ];
+
+  for (const route of PARAM_ROUTES) {
+    app[route.method](route.path, (req, res) => proxyToFastApi(req, res, route.upstream(req.params)));
   }
 
   // WNTR simulation stays served from Node for now — it's a decorative

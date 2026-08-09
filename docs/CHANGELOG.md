@@ -1,5 +1,67 @@
 # CHANGELOG
 
+## [2026-08-05] — Impact, Alert Center & Automatic Reports
+
+### Added
+- **Impact engine** (`backend/impact/`): converts a detector's estimated leak
+  rate into the terms operators decide in. `water_loss.py` (L/min → hour / day /
+  week / month / year + relatable equivalents), `cost_estimator.py` (volumetric
+  tariff applied per kilolitre), `severity.py` (MINOR/MODERATE/MAJOR/CRITICAL
+  bands + repair-urgency recommendation), `progression.py` ("what if nobody
+  fixes this?" projection), composed by `impact_service.py`. Tariff, bands and
+  equivalents live in the new `backend/config/impact.yaml` so a utility can
+  retune them without a code change.
+- **Alert Center** (`backend/alerts/alert_service.py`): aggregates per-sample
+  detection responses into durable leak *incidents* with a lifecycle
+  (ACTIVE → RESOLVED / FALSE_POSITIVE), persisted to a new `alerts` collection.
+  Consecutive alarm samples merge into one incident; re-ingesting a timestamp an
+  incident already covers updates it rather than duplicating, which is what
+  keeps the looping replay player from producing hundreds of alerts per run.
+  `is_open` (detector still in alarm) is tracked separately from `status`
+  (operator disposition).
+- **Water Savings counter**: repaired incidents credit the water they would
+  have lost over a configurable 30-day horizon at their peak observed rate.
+  Dismissed false positives are never credited, and reopening reverses the
+  credit.
+- **Leak History Explorer**: server-side filtering by status, zone, severity,
+  likelihood, date range and free text, plus a monthly incident trend.
+- **Automatic experiment reports** (`backend/reports/`): one call turns a stored
+  run into a full write-up — metadata, ground-truth leak events, detector
+  metrics scored by the real `ReplayRunner`, inline-SVG telemetry graphs with
+  leak windows shaded, quantified impact, and auto-generated conclusions.
+  Rendered as standalone printable HTML (`/api/reports/experiment/:id/html`)
+  rather than via a PDF library, so the browser's Save-as-PDF is the export path
+  and the artifact stays dependency-free.
+- New API routes: `/api/impact/{config,current,simulate}`, `/api/alerts`,
+  `/api/alerts/summary`, `/api/alerts/:id/{resolve,false-positive,reopen}`,
+  `/api/savings`, `/api/reports/experiment/:run_id[/html]` — all proxied through
+  `server.ts` (which now also forwards query strings and passes non-JSON
+  responses through verbatim).
+- Frontend: `ImpactSimulatorView` (interactive what-if simulator),
+  rewritten `AlertsView` (incident queue with disposition actions), new
+  `LeakHistoryView`, rewritten `ReportsView`, and an `ImpactSummaryStrip` on the
+  Dashboard. `ViewErrorBoundary` now contains a render failure to the current
+  view instead of blanking the whole app.
+- Tests: `tests/test_impact.py` (19) and `tests/test_alert_service.py` (20),
+  the latter fully isolated from MongoDB via `enable_persistence=False`.
+
+### Fixed
+- `WorkOrderRepository.list_all()` returned Mongo `_id` (an `ObjectId`), which
+  is not JSON-serializable and would break `/api/work-orders` once any work
+  order existed. Now projected out, as is the `_id` Mongo stamps onto the dict
+  during dispatch.
+- `AlertsView` and `ReportsView` were entirely hardcoded mock data with no
+  backend calls; both now read real state.
+- The Alerts badge in the sidebar/header was a hardcoded `3`; it now reflects
+  the real active-incident count.
+
+### Notes
+- Impact figures are indicative projections, and the progression simulator
+  assumes a constant leak rate (stated in its own `assumptions` field) — real
+  leaks worsen, so the projection is a conservative lower bound.
+- The repair-urgency recommendation is deliberately *scheduling* advice only;
+  `tests/test_impact.py` asserts no valve/pump control language can appear in it.
+
 ## [2026-08-05]
 ### Fixed
 - Firmware (`firmware/src/`) was Serial-print scaffolding with no real WiFi/MQTT
