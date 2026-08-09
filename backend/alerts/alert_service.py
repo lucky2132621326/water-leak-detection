@@ -30,7 +30,8 @@ MINUTES_PER_DAY = 60 * 24
 
 
 class AlertService:
-    def __init__(self, db=None, impact_service: ImpactService = None, enable_persistence: bool = True):
+    def __init__(self, db=None, impact_service: ImpactService = None, enable_persistence: bool = True,
+                 notifier=None):
         """`enable_persistence=False` gives a pure in-memory service that never
         touches MongoDB — used by the test suite so it neither requires a running
         database nor reads/writes real incident data."""
@@ -44,6 +45,10 @@ class AlertService:
         self.impact = impact_service or ImpactService()
         self.merge_gap_sec = float(impact_loader.get("alerts.merge_gap_sec", 30))
         self.prevented_horizon_days = float(impact_loader.get("savings.prevented_horizon_days", 30))
+        if notifier is None:
+            from backend.notifications.whatsapp import get_whatsapp_notifier
+            notifier = get_whatsapp_notifier()
+        self.notifier = notifier
         self._load_from_db()
 
     # --- persistence ------------------------------------------------------
@@ -190,6 +195,12 @@ class AlertService:
         self._alerts.append(alert)
         self._persist(alert)
         logger.info(f"[AlertService] Raised {alert['alert_id']} in {alert['zone']} at {rate:.2f} L/min")
+        # `_create` runs only once per incident. The notifier handles its own
+        # deduplication and worker thread, so telemetry ingestion never blocks.
+        try:
+            self.notifier.enqueue(alert)
+        except Exception as exc:
+            logger.warning(f"[AlertService] Could not queue WhatsApp notification: {exc}")
         return alert
 
     def _update(self, alert, response, ts, rate):

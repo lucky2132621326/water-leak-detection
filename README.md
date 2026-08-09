@@ -4,6 +4,10 @@ An explainable hardware-in-the-loop platform for detecting and localizing
 probable water leaks from flow imbalance, pump-current signatures, CUSUM drift,
 and minimum-night-flow evidence.
 
+Confirmed live incidents can optionally send one deduplicated Twilio WhatsApp
+Content Template message. Credentials remain in `.env`, and replay notifications
+are disabled by default. See `docs/WHATSAPP_ALERTS.md`.
+
 This is decision-support software: every result includes confidence, evidence,
 a false-positive warning, and a field-verification requirement. The dashboard
 does not expose operational pump or valve controls.
