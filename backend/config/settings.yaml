@@ -15,10 +15,10 @@ hydraulics:
   topology: "recombined_branch"
   zero_leak_bias_lpm: 0.02
 
-detector:
-  sigma_multiplier: 3.0
-  persistence_seconds: 10
-  bias_lpm: 0.10
-  current_drop_threshold_ma: 20.0
-  cusum_slack_k: 0.15
-  cusum_decision_h: 3.0
+# Per-detector tuning (sigma, persistence, thresholds) lives in
+# backend/config/thresholds.yaml, not here — a "detector:" block used to be
+# duplicated in both files with DIFFERENT values (this file had
+# persistence_seconds=10, thresholds.yaml has 5; this file had bias_lpm=0.10,
+# CalibrationRepository has 0.02), and nothing ever actually read this file's
+# copy. Removed to stop that drift. thresholds.yaml + CalibrationRepository
+# are the only things DetectorManager actually loads.

@@ -46,6 +46,7 @@ class ReplayRunner:
                 pump_on=actuators.get("pump1", True),
                 servo_state_deg=actuators.get("servo_deg", 0),
                 pressure_bar=doc.get("pressure_bar"),
+                vibration=doc.get("vibration"), water_temp_c=(doc.get("temp") or {}).get("water_c"),
             )
             response = build_response(result)
             self.detection_repo.save_response(response, run_id=run_id)

@@ -1,5 +1,74 @@
 # CHANGELOG
 
+## [2026-08-09] (cont'd) — Acoustic channel end-to-end + localization/docs honesty pass
+
+### Added
+- Fifth detection channel, acoustic (MPU6050 + piezo): `backend/detectors/acoustic_detector.py`
+  (ratio-to-baseline, not raw threshold), wired through `DetectorManager`,
+  `FusionEngine` (reweighted 32/20/16/12/20% + independent-agreement bonus
+  when acoustic corroborates a flow/current channel), `DetectionPipeline`,
+  `TelemetryDTO`, `TelemetryRepository`, both replay paths, and
+  `DetectionEngineView.tsx` (new card + vibration spectrum panel, honest
+  "no sensor data" empty state).
+- Temperature compensation (DS18B20): `CalibrationRepository.temp_k_coeff`
+  (default 0.0, no-op until characterised), applied in `pipeline.py`.
+- Firmware drivers for all three new v2 sensors: `vibration_sensor.{h,cpp}`,
+  `piezo_sensor.{h,cpp}`, `temp_sensor.{h,cpp}`, wired into `main.cpp` on a
+  5s cadence (both bursts are blocking, too slow for the 1Hz loop) and
+  `mqtt_client.cpp`'s telemetry payload. **Not compiled/flashed** — no
+  PlatformIO toolchain available; needs real hardware verification.
+- Calibration UI + API: `vib_baseline_band_mid`, `temp_k_coeff` fields,
+  verified via live save/readback.
+
+### Fixed
+- `LocalizationService` no longer claims "Branch_A, HIGH confidence" from
+  servo state alone — it now uses `BranchAnalyzer.evaluate_isolation()` to
+  compare residual before/after closing the servo, waiting for the reading
+  to settle first. Caught and fixed a real bug in the same pass: a fully
+  successful isolation (residual near zero) was hitting the generic
+  "no leak" bailout before the isolation-test check ran, silently losing
+  the confirmation.
+- `Branch_C` removed from `known_zones` — the rig has no sensor that can
+  distinguish leak tee C from A/B/the main line; listing it as a possible
+  output overclaimed precision the hardware doesn't support.
+- `docs/PROJECT_CONTEXT.md`: replaced a fabricated "ONLINE"/"WORKING"
+  hardware status table (fixed IP, wrong GPIO pins, never bench-verified)
+  with an honest one; removed a fictional 5-person team roster; removed
+  false "completed" claims for WNTR/CP-SAT (both decorative/renamed);
+  corrected the MongoDB collection schema description to match reality.
+
+See also the same-day entry above for CORS/CP-SAT-rename/FP-rate-honesty/
+schema.sql-deletion fixes from earlier in this session.
+
+## [2026-08-09] — Audit fixes + hardware spec v2 (acoustic channel)
+
+### Changed
+- Hardware spec updated to v2 (`docs/HARDWARE_INTEGRATION_SPEC.md`): three
+  new sensors (MPU6050, piezo, DS18B20) add a fifth detection channel
+  (acoustic) and two new GPIO assignments (piezo GPIO33, DS18B20 GPIO4). No
+  status LED. `tools/mock_publisher.py` now emits `vibration`/`temp` fields;
+  firmware/backend/UI changes for the new channel are pending confirmation.
+- CORS restricted from wildcard (`allow_origins=["*"]`) to an explicit
+  allowlist (`backend/api_server.py`, `CORS_ALLOWED_ORIGINS` env var) — the
+  API has unauthenticated mutating routes (mode switch, work-order dispatch,
+  ground-truth logging), so wildcard CORS let any origin script the rig.
+- `backend/scheduler/cp_sat_scheduler.py` renamed to `work_order_scheduler.py`
+  (`WorkOrderScheduler`) — it was plain round-robin (`idx % crew_count`),
+  never actual OR-Tools/CP-SAT constraint solving. Also fixed a hardcoded
+  `"2026-08-03 10:30:00"` dispatch timestamp to use real current time.
+- False-positive rate table (`backend/response/response_builder.py`) is now
+  explicitly labeled illustrative/not-measured (`rate_is_measured: false` in
+  the API response, matching UI copy) — it's an asserted per-tier estimate,
+  not computed from a labeled validation set.
+- `/api/simulation/wntr` response now carries an explicit `is_simulated: true`
+  flag — it's a hardcoded sine-wave curve, not a real WNTR/EPANET solve.
+  (`WNTRSimulationView` was already unreachable from the dashboard nav.)
+
+### Removed
+- `backend/storage/schema.sql` — stale, unused SQLite artifact; nothing in
+  the codebase has read or executed it since MongoDB was adopted
+  (docs/DECISIONS.md #001). If you're looking for it, persistence is Mongo.
+
 ## [2026-08-05] — Impact, Alert Center & Automatic Reports
 
 ### Added

@@ -13,7 +13,7 @@ import threading
 import time
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -27,7 +27,7 @@ from backend.repositories.detection_repository import LeakEventRepository, WorkO
 from backend.repositories.db import get_db
 from backend.repositories.file_logger import log_path as file_log_path, frames_logged as file_frames_logged
 from backend.replay.replay_runner import ReplayRunner
-from backend.scheduler.cp_sat_scheduler import CPSatWorkOrderScheduler
+from backend.scheduler.work_order_scheduler import WorkOrderScheduler
 from backend.calibration.calibration_repository import CalibrationRepository
 from backend.localization.localization_service import LocalizationService
 from backend.alerts.alert_service import get_alert_service
@@ -39,7 +39,40 @@ from backend.utils.logger import logger
 from backend.config.config_loader import config_loader
 
 app = FastAPI(title="Water Leak Detection API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Wildcard CORS on an API with unauthenticated mutating routes (mode switch,
+# work-order dispatch, alert disposition, ground-truth logging) lets any
+# origin script the whole rig. This service is only ever meant to be called
+# by server.ts's proxy and local dev tooling, so the allowlist is explicit —
+# override with CORS_ALLOWED_ORIGINS (comma-separated) for other setups.
+_default_origins = "http://localhost:3000,http://127.0.0.1:3000"
+_allowed_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", _default_origins).split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
+)
+
+# State-changing routes (mode switch, calibration, ground-truth logging,
+# work-order dispatch, alert disposition) require this key. server.ts holds
+# it server-side and attaches it when proxying — the browser never sees it,
+# so nothing changes for the dashboard itself. This closes "any script on
+# the same network can POST directly to :8001" without standing up a full
+# user-account system, which would be disproportionate for a single-rig
+# ops tool with no multi-tenancy.
+_API_KEY = os.getenv("API_KEY", "local-dev-key-change-me")
+if _API_KEY == "local-dev-key-change-me":
+    logger.warning(
+        "[Security] API_KEY not set — using the insecure default. Set API_KEY "
+        "(and the matching value in server.ts's environment) before exposing "
+        "this service beyond localhost."
+    )
+
+
+def require_api_key(x_api_key: Optional[str] = Header(None)):
+    if x_api_key != _API_KEY:
+        raise HTTPException(status_code=401, detail="Missing or invalid X-API-Key")
 
 
 class ReplayPlayer:
@@ -81,6 +114,7 @@ class ReplayPlayer:
                     q_branch=flow.get("q_branch_lpm", 0.0), current_ma=power["current_ma"],
                     voltage_v=power.get("voltage", 12.0), pump_on=actuators.get("pump1", True),
                     servo_state_deg=actuators.get("servo_deg", 0), pressure_bar=doc.get("pressure_bar"),
+                    vibration=doc.get("vibration"), water_temp_c=(doc.get("temp") or {}).get("water_c"),
                 )
                 response = build_response(result)
                 get_alert_service().ingest(response, source="replay", run_id=self.current_run_id)
@@ -162,6 +196,8 @@ class CalibrationRequest(BaseModel):
     flow3_k: float
     bias_lpm: float
     sigma_lpm: float
+    vib_baseline_band_mid: float = 0.015
+    temp_k_coeff: float = 0.0
 
 
 @app.get("/api/health")
@@ -226,7 +262,7 @@ def calibration():
     return CalibrationRepository().data
 
 
-@app.post("/api/calibration")
+@app.post("/api/calibration", dependencies=[Depends(require_api_key)])
 def update_calibration(req: CalibrationRequest):
     global _replay_player
     values = req.model_dump()
@@ -234,6 +270,10 @@ def update_calibration(req: CalibrationRequest):
         return {"success": False, "error": "Flow K-factors must be between 100 and 2000 pulses/litre"}
     if not (-5.0 <= req.bias_lpm <= 5.0) or not (0.001 <= req.sigma_lpm <= 5.0):
         return {"success": False, "error": "Bias or sigma is outside the supported range"}
+    if not (0.0 < req.vib_baseline_band_mid <= 1.0):
+        return {"success": False, "error": "Vibration baseline band_mid must be between 0 and 1.0"}
+    if not (-1.0 <= req.temp_k_coeff <= 1.0):
+        return {"success": False, "error": "Temperature K-factor coefficient must be between -1.0 and 1.0"}
 
     repository = CalibrationRepository()
     repository.save_calibration({**values, "calibrated_at": time.time()})
@@ -249,7 +289,7 @@ def ground_truth_status():
         return {"active": _active_ground_truth is not None, "event": _active_ground_truth}
 
 
-@app.post("/api/ground-truth/start")
+@app.post("/api/ground-truth/start", dependencies=[Depends(require_api_key)])
 def ground_truth_start(req: GroundTruthStartRequest):
     global _active_ground_truth
     mqtt_connected = bool(_mqtt_client and _mqtt_client.is_connected()) if _mqtt_client else False
@@ -294,7 +334,7 @@ def ground_truth_start(req: GroundTruthStartRequest):
         return {"success": True, "event": _active_ground_truth}
 
 
-@app.post("/api/ground-truth/stop")
+@app.post("/api/ground-truth/stop", dependencies=[Depends(require_api_key)])
 def ground_truth_stop():
     global _active_ground_truth
     with _ground_truth_lock:
@@ -308,7 +348,7 @@ def ground_truth_stop():
         return {"success": True, "event": completed}
 
 
-@app.post("/api/mode")
+@app.post("/api/mode", dependencies=[Depends(require_api_key)])
 def set_mode(req: ModeRequest):
     global _mode
     if req.mode not in ("live", "replay"):
@@ -445,9 +485,9 @@ def list_work_orders():
     return WorkOrderRepository().list_all()
 
 
-@app.post("/api/work-orders/dispatch")
+@app.post("/api/work-orders/dispatch", dependencies=[Depends(require_api_key)])
 def dispatch_work_order(body: dict):
-    scheduler = CPSatWorkOrderScheduler()
+    scheduler = WorkOrderScheduler()
 
     # A work order can be raised straight from an Alert Center incident, in
     # which case the severity comes from the incident's peak observed rate
@@ -561,7 +601,7 @@ def alerts_summary():
     return {"counts": svc.counts(), "zones": svc.zones(), "timeline": svc.timeline()}
 
 
-@app.post("/api/alerts/{alert_id}/resolve")
+@app.post("/api/alerts/{alert_id}/resolve", dependencies=[Depends(require_api_key)])
 def resolve_alert(alert_id: str, body: dict = None):
     alert = _alerts().resolve(alert_id, note=(body or {}).get("note", ""))
     if not alert:
@@ -569,7 +609,7 @@ def resolve_alert(alert_id: str, body: dict = None):
     return {"success": True, "alert": alert, "savings": _alerts().savings()}
 
 
-@app.post("/api/alerts/{alert_id}/false-positive")
+@app.post("/api/alerts/{alert_id}/false-positive", dependencies=[Depends(require_api_key)])
 def false_positive_alert(alert_id: str, body: dict = None):
     alert = _alerts().mark_false_positive(alert_id, note=(body or {}).get("note", ""))
     if not alert:
@@ -577,7 +617,7 @@ def false_positive_alert(alert_id: str, body: dict = None):
     return {"success": True, "alert": alert, "savings": _alerts().savings()}
 
 
-@app.post("/api/alerts/{alert_id}/reopen")
+@app.post("/api/alerts/{alert_id}/reopen", dependencies=[Depends(require_api_key)])
 def reopen_alert(alert_id: str):
     alert = _alerts().reopen(alert_id)
     if not alert:

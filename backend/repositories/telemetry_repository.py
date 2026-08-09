@@ -38,7 +38,18 @@ class TelemetryRepository:
                 "uptime_s": telemetry.health.uptime_s,
                 "wifi_rssi": telemetry.health.wifi_rssi,
                 "free_heap": telemetry.health.free_heap
-            }
+            },
+            "vibration": {
+                "rms": telemetry.vibration.rms,
+                "band_low": telemetry.vibration.band_low,
+                "band_mid": telemetry.vibration.band_mid,
+                "band_high": telemetry.vibration.band_high,
+                "piezo_rms": telemetry.vibration.piezo_rms,
+                "piezo_centroid_hz": telemetry.vibration.piezo_centroid_hz,
+            } if telemetry.vibration.available() else None,
+            "temp": {
+                "water_c": telemetry.temp.water_c,
+            } if telemetry.temp.water_c is not None else None,
         }
         if extra:
             doc.update(extra)

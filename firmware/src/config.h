@@ -22,6 +22,18 @@
 #define PIN_SERVO_LEAK 27
 #define PIN_I2C_SDA 21
 #define PIN_I2C_SCL 22
+#define PIN_PIEZO 33     // ADC1 — safe to read with WiFi active, unlike ADC2 pins
+#define PIN_DS18B20 4    // 1-Wire; needs a 4.7k pull-up to 3.3V or it won't enumerate
+
+// Acoustic channel (hardware spec v2 section 5.3). Bursts are blocking (FFT
+// on 512 samples, DS18B20 conversion) so they run on a slower cadence than
+// the 1Hz telemetry loop — the last burst result is cached and republished
+// with every telemetry frame in between.
+#define VIBRATION_BURST_INTERVAL_MS 5000UL
+#define VIBRATION_SAMPLE_RATE_HZ 500
+#define VIBRATION_SAMPLE_COUNT 512
+#define PIEZO_SAMPLE_RATE_HZ 2000
+#define PIEZO_SAMPLE_COUNT 500  // 0.25s @ 2kHz
 
 // Sensor Calibration Constants
 #define K_FACTOR_FLOW_IN 450.0f

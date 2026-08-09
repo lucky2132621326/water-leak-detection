@@ -285,7 +285,8 @@ const AlertRow: React.FC<{
           )}
           {fpRate !== undefined && (
             <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 leading-relaxed">
-              <strong>False-positive risk ≈ {(fpRate * 100).toFixed(1)}%</strong> at {alert.confidence_tier} confidence.{" "}
+              <strong>Illustrative false-positive estimate ≈ {(fpRate * 100).toFixed(1)}%</strong> at {alert.confidence_tier} confidence
+              (not measured against a labeled validation set — see disclaimer).{" "}
               {alert.false_positive_warning?.disclaimer}
             </p>
           )}

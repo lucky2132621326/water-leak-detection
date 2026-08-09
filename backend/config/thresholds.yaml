@@ -17,6 +17,21 @@ cusum:
   h_decision_threshold: 5.0
   reset_after_normal_samples: 10
 
+# Acoustic channel (MPU6050 + piezo, hardware spec v2 section 6). Band
+# energies are meaningless in absolute terms — ratio_threshold is how far
+# above CalibrationRepository's vib_baseline.band_mid the live reading must
+# be, sustained for persistence_seconds, before it counts as anomalous.
+# These values are PROVISIONAL placeholders (no real sensor characterised
+# yet) — replace once bench calibration exists.
+acoustic:
+  ratio_threshold: 1.8
+  persistence_seconds: 3
+
 fusion:
   high_alarm_confidence: 0.75
   medium_alarm_confidence: 0.50
+  # Bonus added to the fused score when the acoustic channel agrees with at
+  # least one flow/current-based channel — per spec section 6, agreement
+  # between PHYSICALLY INDEPENDENT signals should count for more than any
+  # single channel's raw magnitude.
+  independent_agreement_bonus: 0.15

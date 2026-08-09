@@ -5,6 +5,10 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 
 const FASTAPI_BASE_URL = process.env.FASTAPI_BASE_URL || "http://localhost:8001";
+// Server-side only — never sent to the browser. FastAPI rejects mutating
+// requests without this matching its own API_KEY env var. Must be set to
+// the same value in both processes' environments (see .env.example).
+const FASTAPI_API_KEY = process.env.API_KEY || "local-dev-key-change-me";
 const WORKSPACE_ROOT = path.resolve(process.cwd());
 const SENSITIVE_FILENAMES = new Set([".env", "secrets.h"]);
 
@@ -31,7 +35,7 @@ async function startServer() {
       const url = `${FASTAPI_BASE_URL}${fastApiPath}${query}`;
       const init: RequestInit = {
         method: req.method,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-API-Key": FASTAPI_API_KEY },
         signal: AbortSignal.timeout(4000),
       };
       if (req.method !== "GET" && req.method !== "HEAD") {
@@ -110,7 +114,9 @@ async function startServer() {
     const leakPressure = normalPressure.map((p, h) => Number((h >= 10 && h <= 18 ? p - 4.5 : p).toFixed(2)));
 
     res.json({
-      network: "Net3_Rig_Subsystem_24hr (decorative placeholder, not a real WNTR/EPANET solve)",
+      network: "Net3_Rig_Subsystem_24hr",
+      is_simulated: true,
+      note: "Decorative placeholder — hardcoded sine-wave curve, not a real WNTR/EPANET hydraulic solve. Not wired into the dashboard nav.",
       hours,
       normal_pressure_m: normalPressure,
       leak_pressure_m: leakPressure,

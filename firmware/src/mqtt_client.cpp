@@ -102,8 +102,10 @@ void MQTTHandler::publishTelemetry(unsigned long ts, uint32_t seq, float qIn, fl
                                     float currentMA, float voltageV,
                                     uint32_t rawPulsesIn, uint32_t rawPulsesOut, uint32_t rawPulsesBranch,
                                     bool pump1On, bool pump2On, int servoDeg,
-                                    unsigned long uptimeSec, int wifiRssi, uint32_t freeHeap) {
-    StaticJsonDocument<768> doc;
+                                    unsigned long uptimeSec, int wifiRssi, uint32_t freeHeap,
+                                    const VibrationSample& vibration, const PiezoSample& piezo, bool vibrationValid,
+                                    float waterTempC) {
+    StaticJsonDocument<1024> doc;
     doc["ts"] = ts;
     doc["seq"] = seq;
     doc["device"] = deviceId;
@@ -132,7 +134,26 @@ void MQTTHandler::publishTelemetry(unsigned long ts, uint32_t seq, float qIn, fl
     health["free_heap"] = freeHeap;
     // pressure_bar intentionally omitted — no physical pressure sensor on this
     // rig; the backend derives an estimated value (see docs/MQTT_SPEC.md note).
-    char buf[768];
+
+    // vibration/temp are only included once a real burst has completed —
+    // an all-zeros vibration object would look like a valid clean-baseline
+    // reading to the backend's ratio-to-baseline detector, which is worse
+    // than just omitting the field until there's a real sample.
+    if (vibrationValid) {
+        JsonObject vib = doc.createNestedObject("vibration");
+        vib["rms"] = vibration.rms;
+        vib["band_low"] = vibration.band_low;
+        vib["band_mid"] = vibration.band_mid;
+        vib["band_high"] = vibration.band_high;
+        vib["piezo_rms"] = piezo.rms;
+        vib["piezo_centroid_hz"] = piezo.centroid_hz;
+    }
+    if (!isnan(waterTempC)) {
+        JsonObject tempObj = doc.createNestedObject("temp");
+        tempObj["water_c"] = waterTempC;
+    }
+
+    char buf[1024];
     size_t n = serializeJson(doc, buf);
 
     if (client.connected()) {

@@ -68,6 +68,17 @@ class LiveTelemetryIngestor:
         is_simulation = dto.device_id.lower().startswith(("mock", "sim"))
         pump_on = dto.actuators.pump1 or dto.actuators.pump2
 
+        vibration = None
+        if dto.vibration.available():
+            vibration = {
+                "rms": dto.vibration.rms,
+                "band_low": dto.vibration.band_low,
+                "band_mid": dto.vibration.band_mid,
+                "band_high": dto.vibration.band_high,
+                "piezo_rms": dto.vibration.piezo_rms,
+                "piezo_centroid_hz": dto.vibration.piezo_centroid_hz,
+            }
+
         result = self.pipeline.process_sample(
             ts=dto.ts,
             q_in=dto.flow.q_in_lpm,
@@ -77,6 +88,8 @@ class LiveTelemetryIngestor:
             voltage_v=dto.power.voltage,
             pump_on=pump_on,
             servo_state_deg=dto.actuators.servo_deg,
+            vibration=vibration,
+            water_temp_c=dto.temp.water_c,
         )
         response = build_response(result)
 

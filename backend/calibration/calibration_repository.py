@@ -28,6 +28,10 @@ class CalibrationRepository:
             "sigma_lpm": 0.03,
             "ina219_no_load_ma": 420.0,
             "ina219_load_slope": 2.5,
+            "vib_baseline_band_mid": 0.015,
+            "vib_baseline_status": "PROVISIONAL — no real MPU6050 characterised yet",
+            "temp_k_coeff": 0.0,
+            "temp_reference_c": 24.0,
             "clamp_calibration": {
                 "TEE_A": {"0.25": 0.18, "0.50": 0.34, "0.75": 0.51, "1.00": 0.72},
                 "TEE_B": {"0.25": 0.17, "0.50": 0.33, "0.75": 0.50, "1.00": 0.70},
@@ -49,3 +53,12 @@ class CalibrationRepository:
 
     def get_sigma(self) -> float:
         return self.data.get("sigma_lpm", 0.03)
+
+    def get_vib_baseline_band_mid(self) -> float:
+        return self.data.get("vib_baseline_band_mid", 0.015)
+
+    def get_temp_k_coeff(self) -> float:
+        return self.data.get("temp_k_coeff", 0.0)
+
+    def get_temp_reference_c(self) -> float:
+        return self.data.get("temp_reference_c", 24.0)

@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include "vibration_sensor.h"
+#include "piezo_sensor.h"
 
 // Forward-declared so main.cpp can wire valve/pump commands received on
 // rig/cmd back into the RelayController/ServoController instances without
@@ -34,7 +36,9 @@ public:
                            float currentMA, float voltageV,
                            uint32_t rawPulsesIn, uint32_t rawPulsesOut, uint32_t rawPulsesBranch,
                            bool pump1On, bool pump2On, int servoDeg,
-                           unsigned long uptimeSec, int wifiRssi, uint32_t freeHeap);
+                           unsigned long uptimeSec, int wifiRssi, uint32_t freeHeap,
+                           const VibrationSample& vibration, const PiezoSample& piezo, bool vibrationValid,
+                           float waterTempC);
     void publishStatus(int wifiRssi, unsigned long uptimeSec, uint32_t heapFree);
 };
 

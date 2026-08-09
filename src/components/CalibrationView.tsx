@@ -7,9 +7,14 @@ type CalibrationForm = {
   flow3_k: number;
   bias_lpm: number;
   sigma_lpm: number;
+  vib_baseline_band_mid: number;
+  temp_k_coeff: number;
 };
 
-const initial: CalibrationForm = { flow1_k: 450, flow2_k: 450, flow3_k: 450, bias_lpm: 0.02, sigma_lpm: 0.03 };
+const initial: CalibrationForm = {
+  flow1_k: 450, flow2_k: 450, flow3_k: 450, bias_lpm: 0.02, sigma_lpm: 0.03,
+  vib_baseline_band_mid: 0.015, temp_k_coeff: 0.0,
+};
 
 export const CalibrationView: React.FC = () => {
   const [form, setForm] = useState(initial);
@@ -22,6 +27,8 @@ export const CalibrationView: React.FC = () => {
       .then((data) => setForm({
         flow1_k: Number(data.flow1_k), flow2_k: Number(data.flow2_k), flow3_k: Number(data.flow3_k),
         bias_lpm: Number(data.bias_lpm), sigma_lpm: Number(data.sigma_lpm),
+        vib_baseline_band_mid: Number(data.vib_baseline_band_mid ?? 0.015),
+        temp_k_coeff: Number(data.temp_k_coeff ?? 0.0),
       }))
       .catch(() => setStatus("Calibration service unavailable."));
   }, []);
@@ -82,6 +89,17 @@ export const CalibrationView: React.FC = () => {
           <label className="bg-slate-50 border border-slate-200/70 rounded-2xl p-5 text-xs font-bold text-slate-700">Baseline residual sigma
             <span className="block text-[11px] font-medium text-slate-500 mt-1">Standard deviation used by the 3σ mass-balance detector.</span>
             <input type="number" min="0.001" step="0.001" value={form.sigma_lpm} onChange={(event) => update("sigma_lpm", event.target.value)} className="mt-3 w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold" />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+          <label className="bg-slate-50 border border-slate-200/70 rounded-2xl p-5 text-xs font-bold text-slate-700">Acoustic baseline (band-mid)
+            <span className="block text-[11px] font-medium text-slate-500 mt-1">Clean-running MPU6050 band_mid energy (50-150 Hz). The acoustic detector alarms on the ratio of live readings to this value, not a raw threshold. PROVISIONAL — no real sensor characterised yet.</span>
+            <input type="number" min="0.0001" step="0.0001" value={form.vib_baseline_band_mid} onChange={(event) => update("vib_baseline_band_mid", event.target.value)} className="mt-3 w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold" />
+          </label>
+          <label className="bg-slate-50 border border-slate-200/70 rounded-2xl p-5 text-xs font-bold text-slate-700">Temperature K-factor coefficient
+            <span className="block text-[11px] font-medium text-slate-500 mt-1">Corrects flow bias for pump-warming drift (DS18B20). Defaults to 0.0 (no-op) until characterised over a long run.</span>
+            <input type="number" step="0.001" value={form.temp_k_coeff} onChange={(event) => update("temp_k_coeff", event.target.value)} className="mt-3 w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold" />
           </label>
         </div>
 

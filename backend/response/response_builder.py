@@ -13,10 +13,14 @@ _DISCLAIMER = (
     "instructions."
 )
 
+# Illustrative, not measured: these are asserted per-tier estimates, not
+# rates computed from a held-out labeled dataset. docs/DECISIONS.md #003's
+# "14.2% -> <1.5%" figure describes the general effect of requiring 2+
+# concurrent detector methods, not a reproducible measurement against this
+# system's actual validation runs (which is currently a single seeded
+# scenario — see docs/CHANGELOG.md). Treat as a rough prior, not a
+# calibrated probability, until a real scenario-matrix validation exists.
 _CONFIDENCE_FALSE_POSITIVE_RATE = {
-    # Rough false-positive rate by confidence tier, based on the fusion engine's
-    # historical false-positive reduction (docs/DECISIONS.md #003: 14.2% -> <1.5%
-    # once multi-sensor fusion requires 2+ concurrent methods).
     "CRITICAL": 0.01,
     "HIGH": 0.03,
     "MEDIUM": 0.08,
@@ -49,6 +53,9 @@ def _build_evidence_text(pipeline_result):
         parts.append(f"confirmed by {', '.join(active_methods)}")
     else:
         parts.append("no detector currently in alarm")
+
+    if pipeline_result["fusion"].get("independent_agreement"):
+        parts.append("flow/current evidence corroborated by an independent acoustic signature")
 
     return "; ".join(parts)
 
@@ -90,14 +97,17 @@ def build_response(pipeline_result, zone_names=None):
         "active_methods": fusion["active_methods"],
         "false_positive_warning": {
             "disclaimer": _DISCLAIMER,
-            "estimated_false_positive_rate": false_positive_rate
+            "estimated_false_positive_rate": false_positive_rate,
+            "rate_is_measured": False,  # illustrative prior, not from a labeled validation run — see note above
         },
         "work_order_summary": work_order,
         "detectors": detectors_by_method,
         "fusion": {
             "fused_confidence": round(fusion["fused_score"], 2),
             "is_alarm": is_reportable,
-            "severity": tier
+            "severity": tier,
+            "independent_agreement": fusion.get("independent_agreement", False),
         },
         "pressure": pipeline_result["pressure"],
+        "vibration": pipeline_result.get("vibration"),
     }

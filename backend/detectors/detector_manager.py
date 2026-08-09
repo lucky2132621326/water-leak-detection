@@ -1,12 +1,14 @@
 """
 Detector Manager
-Orchestrates the four leak-detection signals the problem statement requires:
-Mass Balance (3-sigma), Current Signature, Minimum Night Flow, and CUSUM.
+Orchestrates the five leak-detection signals the hardware spec requires:
+Mass Balance (3-sigma), Current Signature, Minimum Night Flow, CUSUM, and
+Acoustic (MPU6050 + piezo, spec v2 section 6).
 """
 from backend.detectors.mass_balance import MassBalanceDetector
 from backend.detectors.current_signature_detector import CurrentSignatureDetector
 from backend.detectors.cusum_detector import CUSUMDetector
 from backend.detectors.mnf_detector import MNFDetector
+from backend.detectors.acoustic_detector import AcousticDetector
 from backend.config.config_loader import thresholds_loader
 from backend.calibration.calibration_repository import CalibrationRepository
 
@@ -33,9 +35,14 @@ class DetectorManager:
             night_window_end=thresholds_loader.get("mnf.night_window_end", "05:00"),
             max_allowed_residual_lpm=thresholds_loader.get("mnf.max_allowed_residual_lpm", 0.15)
         )
+        self.acoustic_detector = AcousticDetector(
+            baseline_band_mid=calibration.get_vib_baseline_band_mid(),
+            ratio_threshold=thresholds_loader.get("acoustic.ratio_threshold", 1.8),
+            persistence_count=thresholds_loader.get("acoustic.persistence_seconds", 3),
+        )
 
     def process_sample(self, ts, q_in, q_out, q_branch, current_ma, voltage_v=12.0,
-                       balance_q_in=None, balance_q_branch=None):
+                       balance_q_in=None, balance_q_branch=None, vibration=None):
         effective_q_in = q_in if balance_q_in is None else balance_q_in
         effective_q_branch = q_branch if balance_q_branch is None else balance_q_branch
         residual = effective_q_in - (q_out + effective_q_branch)
@@ -46,5 +53,6 @@ class DetectorManager:
         curr_res = self.current_detector.analyze(current_ma, q_in, voltage_v)
         cusum_res = self.cusum_detector.analyze(residual)
         mnf_res = self.mnf_detector.analyze(ts, residual)
+        acoustic_res = self.acoustic_detector.analyze(vibration)
 
-        return [mb_res, curr_res, cusum_res, mnf_res]
+        return [mb_res, curr_res, cusum_res, mnf_res, acoustic_res]
