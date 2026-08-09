@@ -6,12 +6,10 @@ import {
   Droplets,
   MapPin,
   RotateCcw,
-  BarChart3,
   Sliders,
   ClipboardList,
   FileText,
   Bell,
-  Settings,
   Droplet,
   Calculator,
   History
@@ -52,13 +50,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "localization", label: "Localization", icon: <MapPin className="w-5 h-5" /> },
     { id: "impact-simulator", label: "Impact Simulator", icon: <Calculator className="w-5 h-5" /> },
     { id: "replay", label: "Replay & Benchmark", icon: <RotateCcw className="w-5 h-5" /> },
-    { id: "analytics", label: "Analytics", icon: <BarChart3 className="w-5 h-5" /> },
+    // "analytics" is intentionally not listed here — AnalyticsView is still
+    // 100% hardcoded fake numbers (no fetch calls at all). Route stays
+    // reachable via NavTab/App.tsx for when it's made real; don't add a
+    // sidebar button until then.
     { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" /> },
     { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" /> },
     { id: "reports", label: "Reports", icon: <FileText className="w-5 h-5" /> },
     { id: "alerts", label: "Alert Center", icon: <Bell className="w-5 h-5" />, badge: unreadAlertsCount },
     { id: "leak-history", label: "Leak History", icon: <History className="w-5 h-5" /> },
-    { id: "settings", label: "Settings", icon: <Settings className="w-5 h-5" /> }
+    // "settings" is intentionally not listed here — SettingsView's Save and
+    // Self-Test buttons are both local-state theater with no backend calls,
+    // even though real /api/calibration endpoints exist now (CalibrationView
+    // covers that ground for real). Route stays reachable, just no button.
   ];
 
   return (
@@ -112,8 +116,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="mt-auto pt-4 pb-5 px-5 relative overflow-hidden">
         <div className="absolute inset-0 opacity-20 pointer-events-none">
           <svg className="w-full h-full text-blue-500" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <path d="0,70 Q30,50 60,75 T100,60 L100,100 L0,100 Z" fill="currentColor" />
-            <path d="0,80 Q40,65 70,85 T100,75 L100,100 L0,100 Z" fill="currentColor" opacity="0.6" />
+            <path d="M0,70 Q30,50 60,75 T100,60 L100,100 L0,100 Z" fill="currentColor" />
+            <path d="M0,80 Q40,65 70,85 T100,75 L100,100 L0,100 Z" fill="currentColor" opacity="0.6" />
           </svg>
         </div>
         <div className="relative z-10 text-[11px] text-slate-500 leading-relaxed">

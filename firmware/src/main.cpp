@@ -93,7 +93,7 @@ void loop() {
 
         mqtt.publishTelemetry(
             ts, telemetrySequence++, qIn, qOut, qBranch, currentMA, voltageV,
-            flowIn.getTotalPulses(), flowOut.getTotalPulses(), flowBranch.getTotalPulses(),
+            flowIn.getWindowPulses(), flowOut.getWindowPulses(), flowBranch.getWindowPulses(),
             pump1Relay.getState(), pump2Relay.getState(), branchServo.getAngle(),
             now / 1000, WiFi.RSSI(), ESP.getFreeHeap()
         );

@@ -1,7 +1,7 @@
 #include "flow_sensor.h"
 
 FlowSensor::FlowSensor(uint8_t gpioPin, float kFactorValue)
-    : pin(gpioPin), kFactor(kFactorValue), pulseCount(0), lastPulseCount(0), lastReadMs(0) {}
+    : pin(gpioPin), kFactor(kFactorValue), pulseCount(0), lastPulseCount(0), lastWindowPulses(0), lastReadMs(0) {}
 
 void IRAM_ATTR FlowSensor::isrHandler(void* arg) {
     FlowSensor* self = static_cast<FlowSensor*>(arg);
@@ -33,6 +33,7 @@ float FlowSensor::readFlowLPM() {
 
     uint32_t deltaPulses = currentPulses - lastPulseCount;
     lastPulseCount = currentPulses;
+    lastWindowPulses = deltaPulses;
     lastReadMs = now;
 
     float pulsesPerSec = (float)deltaPulses / ((float)elapsedMs / 1000.0f);
