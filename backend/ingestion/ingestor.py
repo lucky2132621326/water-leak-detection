@@ -103,6 +103,10 @@ def flatten_sample(raw: dict, response: dict = None, leak_active: bool = False) 
         "band_mid": vib.get("band_mid"),
         "vib_rms": vib.get("rms"),
         "piezo_rms": vib.get("piezo_rms"),
+        # SIMULATED and flagged as such, or absent entirely in live. The flag
+        # travels with the value so no chart can plot it without the caveat.
+        "pressure_bar": (raw.get("pressure") or {}).get("bar"),
+        "pressure_is_simulated": bool(raw.get("pressure")),
         "water_c": (raw.get("temp") or {}).get("water_c"),
         "leak_active": bool(leak_active),
         "pump_on": bool(act.get("pump1", False)),
@@ -241,6 +245,12 @@ class TelemetryIngestor:
             servo_state_deg=dto.actuators.servo_deg,
             vibration=dto.vibration,
             water_c=dto.temp.water_c,
+            pump1=dto.actuators.pump1,
+            pump2=dto.actuators.pump2,
+            # None for every live sample — the firmware publishes no pressure
+            # field, so there is no path by which a real rig reading could carry
+            # one. Mock supplies a SIMULATED value.
+            pressure_bar=dto.pressure.bar if dto.pressure else None,
         )
         response = build_response(result)
 

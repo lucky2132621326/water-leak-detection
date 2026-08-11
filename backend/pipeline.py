@@ -11,28 +11,58 @@ from backend.detectors.residual import compute_residual, describe_topology
 from backend.fusion.confidence_engine import ConfidenceEngine
 from backend.fusion.fusion_engine import FusionEngine
 from backend.localization.localization_service import LocalizationService
+from backend.mode import get_active_mode
 
 
 class DetectionPipeline:
-    def __init__(self):
-        self.detector_manager = DetectorManager()
+    def __init__(self, mode: str = None):
+        # The channel set is mode-dependent (6 live, 7 mock). Captured at
+        # construction and reset on every mode switch, so a pipeline never
+        # carries one mode's detectors into the other.
+        self.mode = mode or get_active_mode()
+        self.detector_manager = DetectorManager(mode=self.mode)
         self.fusion_engine = FusionEngine()
         self.localization_service = LocalizationService()
         self.state_machine = DetectionStateMachine()
         self.plausibility_guard = PlausibilityGuard()
         self.alarm_onset_ts = None
+        #: When each channel first crossed its own threshold during the CURRENT
+        #: episode, cleared when everything falls quiet. Kept here rather than in
+        #: each detector because only the pipeline sees `ts`, and computed
+        #: server-side so a dashboard opened mid-leak still shows the sequence
+        #: rather than starting its own clock.
+        self.channel_crossed_at = {}
 
     def process_sample(self, ts, q_in, q_out, q_branch, current_ma, bus_v=12.0,
                        pump_on=True, servo_state_deg=0, vibration=None,
-                       water_c=None, voltage_v=None):
+                       water_c=None, voltage_v=None, pump1=None, pump2=False,
+                       pressure_bar=None):
         if voltage_v is not None:
             bus_v = voltage_v
         residual = compute_residual(q_in, q_out, q_branch, apply_bias=True)
 
         detector_results = self.detector_manager.process_sample(
             ts, q_in, q_out, q_branch, current_ma, bus_v,
-            vibration=vibration, pump_on=pump_on,
+            vibration=vibration, pump_on=pump_on, water_c=water_c,
+            pump1=pump_on if pump1 is None else pump1, pump2=pump2,
+            # Only ever non-None in mock. A live DetectorManager builds no
+            # pressure detector, so this argument goes nowhere there.
+            pressure_bar=pressure_bar,
         )
+
+        # Record the ignition order. Different physics respond at different
+        # speeds — flow imbalance is near-instant, acoustics need the jet to
+        # establish, CUSUM integrates — so the sequence is itself evidence that
+        # independent channels reached the same conclusion.
+        alarming = {r.get("method") for r in detector_results if r.get("is_alarm")}
+        for method in alarming:
+            self.channel_crossed_at.setdefault(method, ts)
+        if not alarming:
+            self.channel_crossed_at.clear()
+        else:
+            for method in list(self.channel_crossed_at):
+                if method not in alarming:
+                    del self.channel_crossed_at[method]
 
         # Adjudicate the flow reading BEFORE fusing. The flow detectors are not
         # independent of one another, so their agreement cannot establish that
@@ -77,6 +107,11 @@ class DetectionPipeline:
             "alarm_onset_ts": self.alarm_onset_ts,
             "plausibility": plausibility,
             "water_c": water_c,
+            "mode": self.mode,
+            "channels": self.detector_manager.methods(),
+            #: {method: ts} for the current episode — the "moment of detection"
+            #: sequence. Empty when nothing is alarming.
+            "channel_crossed_at": dict(self.channel_crossed_at),
             "hydraulics": {
                 "topology": "metered_outflow" if topology["subtract_branch"] else "recombined_branch",
                 "zero_leak_bias_lpm": topology["bias_lpm"],

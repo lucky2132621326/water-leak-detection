@@ -727,9 +727,33 @@ def detectors_config():
     """The fusion weights actually in force, so the UI can display the formula
     it is really running rather than a hand-copied version of it."""
     engine = FusionEngine()
+    # Weights are keyed by every known channel, but only the ones this mode
+    # actually builds should be published — otherwise live mode advertises a
+    # pressure weight for a channel it never constructs.
+    active_methods = _ingestor.pipeline.detector_manager.methods()
+    weights = {k: v for k, v in engine.weights.items() if k in active_methods}
+
+    # Channel availability is a STARTUP property, not a per-sample one. Publishing
+    # it here means the dashboard can show why acoustic_ml is withheld in live
+    # mode even before any telemetry has arrived — which is exactly the state a
+    # rig sits in before the ESP32 first reports.
+    ml = _ingestor.pipeline.detector_manager.acoustic_ml_detector.describe()
+
     return {
-        "weights": engine.weights,
-        "formula": " + ".join(f"{w:.2f}·{k}" for k, w in engine.weights.items()),
+        "mode": _mode,
+        "channels": active_methods,
+        "channel_count": len(active_methods),
+        "acoustic_ml": {
+            "enabled": ml["enabled"],
+            "available": ml["available"],
+            "unavailable_reason": ml["unavailable_reason"],
+            "awaiting_physical_training": bool(
+                ml["unavailable_reason"]
+                and "refused in live mode" in ml["unavailable_reason"]),
+            "bundle_note": (ml["bundle"] or {}).get("note"),
+        },
+        "weights": weights,
+        "formula": " + ".join(f"{w:.2f}·{k}" for k, w in weights.items()),
         "thresholds": {
             "mass_balance_sigma": thresholds_loader.get("mass_balance.sigma_threshold", 3.0),
             "mass_balance_persistence_samples": thresholds_loader.get("mass_balance.persistence_seconds", 5),

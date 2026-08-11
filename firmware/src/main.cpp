@@ -125,6 +125,19 @@ void setup() {
     attachFlowPin(PIN_FLOW_BRANCH, isrFlowBranch);
 
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+    // 400 kHz, before any sensor is initialised so every device is addressed at
+    // the same rate.
+    //
+    // This is a sampling-integrity matter, not a throughput one. The
+    // accelerometer burst reads 6 bytes every 2000 us; at the 100 kHz default
+    // that transaction takes ~800 us, leaving only ~2.5x headroom. Overrun the
+    // budget even occasionally and readAccelBurst's spin-to-next-instant becomes
+    // a no-op, the effective sample rate silently drops below 500 Hz, and the
+    // whole frequency axis shifts — moving the 50-150 Hz band edges the acoustic
+    // features are defined against. Nothing errors; the numbers just stop
+    // meaning what they say. 400 kHz takes the read to ~200 us and the headroom
+    // to ~10x.
+    Wire.setClock(400000);
 
     if (!ina219.begin()) Serial.println("[WARN] INA219 not found at 0x40");
     if (!vibration.begin()) {

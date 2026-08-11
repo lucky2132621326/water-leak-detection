@@ -30,10 +30,16 @@ corroboration at frequencies the MPU6050 cannot reach. A missing piezo must
 never disable acoustic detection, so it is treated as extra evidence, never as a
 requirement.
 """
-from collections import deque
+from collections import defaultdict, deque
 
 from backend.config.config_loader import thresholds_loader
+from backend.ml.acoustic_features import resolve_pump_duty
 from backend.utils.logger import logger
+
+#: Duty buckets the runtime baseline is keyed by. Deliberately the same levels
+#: the exported model bundle uses, so a ratio computed here and a ratio computed
+#: for the classifier mean the same thing.
+DUTY_LEVELS = (0.6, 0.8, 1.0)
 
 
 class AcousticDetector:
@@ -54,27 +60,45 @@ class AcousticDetector:
         #: multiple.
         self.min_baseline_energy = cfg(min_baseline_energy, "min_baseline_energy", 1e-4)
 
-        self.baseline = None
-        self.window = deque(maxlen=100)
+        #: Baseline PER PUMP DUTY, not one global figure.
+        #:
+        #: P2 cycles demand, which changes how hard P1 works and therefore how
+        #: loud the pipe is with no leak present. A single EMA baseline chases
+        #: that cycling: it sits too high just after a busy period and too low
+        #: just after a quiet one, so the ratio picks up a phantom swing that has
+        #: nothing to do with a leak. Bucketing by duty compares like with like.
+        #:
+        #: (`spectral_tilt` in the ML feature set is immune to this by
+        #: construction — same sensor, same instant, two bands — which is why it
+        #: is the most robust feature there. The ratio features are not immune,
+        #: and neither is this detector.)
+        self.baselines = {}
+        self.windows = defaultdict(lambda: deque(maxlen=100))
+        self.samples_by_duty = defaultdict(int)
         self.consecutive = 0
         self.samples_seen = 0
+        self.nominal_flow_lpm = float(
+            thresholds_loader.get("acoustic.nominal_flow_lpm", 5.2))
 
     def reset(self):
-        self.baseline = None
-        self.window.clear()
+        self.baselines = {}
+        self.windows.clear()
+        self.samples_by_duty.clear()
         self.consecutive = 0
         self.samples_seen = 0
 
-    def process_sample(self, vibration, pump_on=True):
+    def process_sample(self, vibration, pump_on=True, q_in_lpm=None,
+                       pump1=True, pump2=False):
         """`vibration` is a VibrationData, or None when the rig has no MPU6050."""
         result = {
             "method": "acoustic",
             "is_alarm": False,
             "confidence": 0.0,
             "band_mid": None,
-            "baseline_band_mid": round(self.baseline, 6) if self.baseline is not None else None,
+            "baseline_band_mid": None,
             "ratio": None,
             "ratio_threshold": self.ratio_threshold,
+            "pump_duty": None,
             "piezo_corroborates": None,
             "active": False,
         }
@@ -94,32 +118,42 @@ class AcousticDetector:
             return result
 
         band_mid = float(vibration.band_mid or 0.0)
+        duty = resolve_pump_duty(DUTY_LEVELS, pump1=pump1, pump2=pump2,
+                                 q_in_lpm=q_in_lpm,
+                                 nominal_flow_lpm=self.nominal_flow_lpm)
         result["active"] = True
         result["band_mid"] = round(band_mid, 6)
+        result["pump_duty"] = duty
         self.samples_seen += 1
+        self.samples_by_duty[duty] += 1
 
-        if self.baseline is None:
-            self.baseline = max(band_mid, self.min_baseline_energy)
-            self.window.append(band_mid)
-            result["reason"] = "establishing clean baseline"
+        baseline = self.baselines.get(duty)
+        if baseline is None:
+            self.baselines[duty] = max(band_mid, self.min_baseline_energy)
+            self.windows[duty].append(band_mid)
+            result["reason"] = f"establishing clean baseline for duty {duty}"
             return result
 
-        if self.baseline < self.min_baseline_energy:
+        if baseline < self.min_baseline_energy:
             result["reason"] = "baseline energy too low to form a meaningful ratio"
             return result
 
-        ratio = band_mid / self.baseline
+        ratio = band_mid / baseline
         result["ratio"] = round(ratio, 3)
-        result["baseline_band_mid"] = round(self.baseline, 6)
+        result["baseline_band_mid"] = round(baseline, 6)
 
-        if self.samples_seen < self.warmup_samples:
-            self._track(band_mid, anomalous=False)
-            result["reason"] = f"warming up ({self.samples_seen}/{self.warmup_samples})"
+        # Warm up EACH duty bucket independently. A rig that has only ever run at
+        # full duty has no business scoring its first few samples at 0.6 against
+        # a one-sample baseline.
+        if self.samples_by_duty[duty] < self.warmup_samples:
+            self._track(duty, band_mid, anomalous=False)
+            result["reason"] = (f"warming up duty {duty} "
+                                f"({self.samples_by_duty[duty]}/{self.warmup_samples})")
             return result
 
         anomalous = ratio >= self.ratio_threshold
         self.consecutive = self.consecutive + 1 if anomalous else 0
-        self._track(band_mid, anomalous=anomalous)
+        self._track(duty, band_mid, anomalous=anomalous)
 
         # The piezo reaches higher frequencies than the MPU6050, so agreement
         # between them is genuine corroboration rather than the same measurement
@@ -141,7 +175,7 @@ class AcousticDetector:
             if self.consecutive == self.persistence_count:
                 logger.warning(
                     f"[Acoustic] band_mid {band_mid:.5f} is {ratio:.2f}x the clean baseline "
-                    f"{self.baseline:.5f} — sustained {self.consecutive} samples")
+                    f"{baseline:.5f} at duty {duty} — sustained {self.consecutive} samples")
 
         return result
 
@@ -156,7 +190,7 @@ class AcousticDetector:
         # amplitude; a pump-duty change moves amplitude alone.
         return bool(centroid is not None and centroid >= 100.0)
 
-    def _track(self, band_mid: float, anomalous: bool):
+    def _track(self, duty: float, band_mid: float, anomalous: bool):
         """Only quiet samples update the baseline.
 
         Letting leak samples drag the baseline up would make the detector adapt
@@ -166,6 +200,6 @@ class AcousticDetector:
         """
         if anomalous:
             return
-        self.window.append(band_mid)
-        self.baseline = (self.baseline_alpha * band_mid
-                         + (1 - self.baseline_alpha) * self.baseline)
+        self.windows[duty].append(band_mid)
+        self.baselines[duty] = (self.baseline_alpha * band_mid
+                                + (1 - self.baseline_alpha) * self.baselines[duty])

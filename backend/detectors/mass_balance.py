@@ -69,10 +69,23 @@ class MassBalanceDetector:
         is_alarm = bool(self.consecutive_triggers >= self.persistence_count)
         confidence = min(1.0, abs(residual) / (threshold + 0.01)) if is_anomaly else 0.0
 
+        # The DELTA is the signal, so it is reported rather than left for a
+        # reader to derive. `sigma_multiple` is the honest way to say "how far
+        # from normal": a residual of 1.2 L/min means nothing on its own, but
+        # +6.4 sigma against this rig's own measured noise means everything.
+        sigma_multiple = (residual - mean) / std if std > 0 else 0.0
+
         return {
             "method": "Mass_Balance",
             "residual": round(residual, 3),
             "threshold": round(threshold, 3),
+            #: Rolling mean of QUIET samples only — what the residual sits at
+            #: when nothing is wrong. Anomalous samples are excluded upstream, so
+            #: this does not drift toward an ongoing leak.
+            "baseline": round(mean, 3),
+            "sigma": round(std, 4),
+            "sigma_multiple": round(sigma_multiple, 2),
+            "is_warm": warm,
             "is_anomaly": is_anomaly,
             "is_alarm": is_alarm,
             "confidence": round(confidence, 2)

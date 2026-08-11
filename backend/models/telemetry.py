@@ -7,10 +7,12 @@ the same DTO either way.
 
 Two fields are deliberately absent:
 
-  * **`pressure_bar`** — this rig has no pressure transducer of any kind. There
-    is no estimated substitute either: a flow-derived "pressure" is a restatement
-    of the residual, and printing it next to real measurements invites it to be
-    read as independent evidence.
+  * **`pressure_bar`** — the LIVE rig has no pressure transducer of any kind, and
+    the firmware publishes no such field. There is no estimated substitute
+    either: a flow-derived "pressure" is a restatement of the residual, and
+    printing it beside real measurements invites it to be read as independent
+    evidence. Mock mode carries a separate, explicitly SIMULATED pressure block
+    (see `SimulatedPressure` below) which live telemetry never populates.
   * **`solenoid_state`** — there is no solenoid. Leaks are opened by hand on a
     worm-drive clamp, so ground truth is an operator-logged window in
     `leak_events`, not a per-sample flag.
@@ -87,6 +89,25 @@ class VibrationData:
 
 
 @dataclass
+class SimulatedPressure:
+    """MOCK ONLY. Generated pressure, never a sensor reading.
+
+    Lives in its own type with `is_simulated` baked in rather than as a bare
+    `pressure_bar` float, so a value cannot be read out of the DTO without the
+    caveat attached. `source` is always "simulated" — never "measured", never
+    "estimated". Live telemetry leaves this None and the live DetectorManager
+    builds no pressure detector to consume it.
+    """
+    bar: Optional[float] = None
+    source: str = "simulated"
+    is_simulated: bool = True
+
+    @property
+    def is_present(self) -> bool:
+        return self.bar is not None
+
+
+@dataclass
 class TempData:
     """Reservoir water temperature. Not a detection channel.
 
@@ -131,6 +152,9 @@ class TelemetryDTO:
     temp: TempData = field(default_factory=TempData)
     actuators: ActuatorData = field(default_factory=ActuatorData)
     health: HealthData = field(default_factory=HealthData)
+    #: MOCK ONLY, and None in live without exception — the firmware publishes no
+    #: pressure field, so a live payload has no key for this to parse.
+    pressure: Optional[SimulatedPressure] = None
 
     @property
     def device_id(self) -> str:
@@ -181,6 +205,14 @@ class TelemetryDTO:
                 piezo_centroid_hz=_optional_float(vib_d.get("piezo_centroid_hz")),
             ),
             temp=TempData(water_c=_optional_float(temp_d.get("water_c"))),
+            # Present only when the mock generator emitted it. A live payload has
+            # no `pressure` key, so this stays None and nothing downstream can
+            # surface a pressure value for a real rig.
+            pressure=(SimulatedPressure(
+                bar=_optional_float((data.get("pressure") or {}).get("bar")),
+                source=(data.get("pressure") or {}).get("source", "simulated"),
+                is_simulated=True,
+            ) if data.get("pressure") else None),
             actuators=ActuatorData(
                 pump1=bool(act_d.get("pump1", data.get("pump_on", False))),
                 pump2=bool(act_d.get("pump2", False)),

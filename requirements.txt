@@ -9,3 +9,21 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 openai>=1.30.0
 ortools==9.12.4544
+
+# --- acoustic ML classifier --------------------------------------------------
+# Pinned to a minor line, not a floor. A joblib bundle is pickled against the
+# estimator classes of the version that trained it, so a scikit-learn upgrade can
+# make an existing bundle refuse to load or — worse — load with altered
+# behaviour. The runtime detector catches that and reports UNAVAILABLE rather
+# than throwing, but the pin is what stops it happening in the first place.
+# Bundles must be retrained if this line moves.
+#
+# Pinned EXACTLY to the version that trained acoustic_clf-2.joblib. Under 1.9.0
+# the bundle still loaded, but sklearn warned it could not guarantee the
+# predictions — "might lead to breaking code or invalid results". A classifier
+# that loads and quietly mispredicts is worse than one that refuses to load, so
+# the runtime matches the estimator classes the bundle was pickled against.
+#
+# Moving this line means retraining and re-exporting the bundle.
+scikit-learn==1.6.1
+joblib>=1.5,<2.0

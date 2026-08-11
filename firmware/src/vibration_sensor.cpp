@@ -11,11 +11,23 @@ static const uint8_t REG_CONFIG     = 0x1A;
 static const uint8_t REG_ACCEL_CFG  = 0x1C;
 static const uint8_t REG_ACCEL_XOUT = 0x3B;
 
-// DLPF setting 0x02 gives ~260 Hz accelerometer bandwidth. This matters: we
-// sample at 500 Hz, so Nyquist is 250 Hz. Without the filter, vibration above
-// that folds back down INTO the 50-150 Hz leak band and would be indistinguishable
-// from a leak.
-static const uint8_t DLPF_260HZ     = 0x02;
+// MPU6050 CONFIG register, DLPF_CFG bits [2:0]. Accelerometer bandwidths:
+//
+//     0x00 -> 260 Hz     0x01 -> 184 Hz     0x02 ->  94 Hz     0x03 -> 44 Hz
+//     0x04 ->  21 Hz     0x05 ->  10 Hz     0x06 ->   5 Hz
+//
+// We sample at 500 Hz, so Nyquist is 250 Hz and we want the widest bandwidth the
+// part offers: 0x00.
+//
+// This previously held 0x02 under the name DLPF_260HZ — named for the value it
+// should have had, set to one giving 94 Hz. The damage landed precisely on the
+// acoustic features: band_mid is 50-150 Hz, so everything above 94 Hz was rolled
+// off; band_high (150-250 Hz) sat entirely in the stopband and read near-zero
+// whether or not a leak was running; and spectral_tilt (band_mid / band_low) was
+// skewed because only its numerator was being filtered. A mislabelled constant,
+// not a wiring fault — which is why it survived: nothing crashes, the numbers
+// just quietly stop meaning what they claim to.
+static const uint8_t DLPF_CFG_260HZ = 0x00;
 // ±2g. The pipe-wall accelerations we care about are small; a wider range would
 // throw away resolution where the whole signal lives.
 static const uint8_t ACCEL_RANGE_2G = 0x00;
@@ -36,7 +48,7 @@ bool VibrationSensor::begin() {
     }
     writeReg(REG_PWR_MGMT_1, 0x00);      // wake
     delay(50);
-    writeReg(REG_CONFIG, DLPF_260HZ);    // anti-alias — see note above
+    writeReg(REG_CONFIG, DLPF_CFG_260HZ);  // 260 Hz bandwidth — see note above
     writeReg(REG_ACCEL_CFG, ACCEL_RANGE_2G);
     present = true;
     piezo   = detectPiezo();
