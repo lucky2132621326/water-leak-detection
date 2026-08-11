@@ -7,13 +7,20 @@ interface DetectionEngineViewProps {
   evaluation: any;
 }
 
-const WEIGHT_ROWS = [
-  { key: "mass_balance", label: "Mass Balance Weight", tone: "text-blue-600" },
-  { key: "acoustic", label: "Acoustic Weight", tone: "text-rose-600" },
-  { key: "current_signature", label: "Motor Current Weight", tone: "text-purple-600" },
-  { key: "mnf", label: "MNF Baseline Weight", tone: "text-amber-600" },
-  { key: "cusum", label: "CUSUM Drift Weight", tone: "text-emerald-600" },
-];
+// Colour per channel. NOT a list of which channels exist — that comes from the
+// config the engine actually published, so the panel shows 6 weights in live and
+// 7 in mock without either count being written down here. The previous hardcoded
+// five-row list silently omitted acoustic_ml and pressure_drop, so the published
+// formula did not describe the running engine.
+const WEIGHT_TONES: Record<string, string> = {
+  mass_balance: "text-blue-600 dark:text-blue-400",
+  current_signature: "text-purple-600 dark:text-purple-400",
+  cusum: "text-emerald-600 dark:text-emerald-400",
+  mnf: "text-amber-600 dark:text-amber-400",
+  acoustic: "text-rose-600 dark:text-rose-400",
+  acoustic_ml: "text-amber-600 dark:text-amber-400",
+  pressure_drop: "text-violet-600 dark:text-violet-400",
+};
 
 const THRESHOLD_LABELS: Record<string, string> = {
   mass_balance_sigma: "Mass balance sigma",
@@ -34,6 +41,18 @@ interface PlausibilityGuardConfig {
 }
 
 interface DetectorConfig {
+  mode?: string;
+  channels?: string[];
+  channel_count?: number;
+  /** Startup state of the ML channel, independent of telemetry — so the reason
+   *  it is withheld is knowable before any sample has arrived. */
+  acoustic_ml?: {
+    enabled: boolean;
+    available: boolean;
+    unavailable_reason: string | null;
+    awaiting_physical_training: boolean;
+    bundle_note: string | null;
+  };
   weights: Record<string, number>;
   formula: string;
   thresholds: Record<string, string | number>;
@@ -43,13 +62,16 @@ interface DetectorConfig {
 export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evaluation }) => {
   const [config, setConfig] = useState<DetectorConfig | null>(null);
 
-  // Fusion weights and thresholds are config, not telemetry — fetch once.
+  // Weights, channel set and ML availability are per-MODE config, not telemetry.
+  // Re-fetched when the mode changes so a live/mock switch does not leave the
+  // panel describing the previous mode's engine.
+  const activeMode = evaluation?.mode;
   useEffect(() => {
     fetch("/api/detectors/config")
       .then((r) => r.json())
       .then(setConfig)
       .catch(() => setConfig(null));
-  }, []);
+  }, [activeMode]);
 
   const detectors = evaluation?.detectors;
   const fusion = evaluation?.fusion;
@@ -67,6 +89,25 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
   const modelProvenance = evaluation?.model_provenance;
   const simulatedPressure = evaluation?.simulated_channels?.pressure_drop;
   const crossedAt = evaluation?.channel_crossed_at ?? {};
+
+  // Live mode refuses a synthetic bundle by design, which is a DIFFERENT state
+  // from a missing model file or a broken sensor. It deserves its own wording:
+  // the channel is built and wired, it is simply waiting for a model trained on
+  // real rig data. Showing a bare "UNAVAILABLE" would read as a fault.
+  // Config first, telemetry second. In live mode with no rig attached there is
+  // no detector result to inspect, but the channel is still refused and the UI
+  // must be able to say so — that is precisely the state a rig sits in before
+  // the ESP32 first reports.
+  const mlAwaitingTraining =
+    config?.acoustic_ml?.awaiting_physical_training === true ||
+    (acousticMl != null && !acousticMl.active &&
+     typeof acousticMl.reason === "string" &&
+     acousticMl.reason.includes("refused in live mode"));
+
+  // No telemetry at all — live mode before any hardware has reported. The cards
+  // below would otherwise render 0.0% confidence everywhere, which reads as a
+  // working system reporting zeros rather than an absence of data.
+  const hasTelemetry = evaluation?.ts != null;
 
   const [showExplanations, setShowExplanations] = useState(false);
 
@@ -173,6 +214,27 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
         </div>
       )}
 
+      {/* No telemetry yet. Live mode before any hardware has reported is
+          LEGITIMATELY empty, and that is worth stating plainly — the detector
+          cards below would otherwise show 0.0% confidence and "—" everywhere,
+          which reads as a working system reporting all-clear rather than a
+          system that has not heard from anything. Never backfilled with mock
+          values: an empty live rig has no readings to show. */}
+      {!hasTelemetry && (
+        <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-8 text-center">
+          <Activity className="w-6 h-6 text-slate-300 dark:text-slate-600 mx-auto" />
+          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mt-3">
+            No telemetry yet
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 max-w-md mx-auto leading-relaxed">
+            No samples have reached the detection pipeline. In Live Sensor mode this is the
+            correct state until the ESP32 publishes to the broker — run an experiment to
+            begin. The channels below stay listed so you can see what will be evaluated,
+            but they hold no readings.
+          </p>
+        </div>
+      )}
+
       {/* MOMENT OF DETECTION — the core story: separate sensors, separate
           physics, same conclusion, different speeds. Offsets come from server
           timestamps, so opening the dashboard mid-leak still shows the real
@@ -239,7 +301,7 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
             <div className="text-right">
               <div className="text-xs text-slate-400 font-medium">Fused Confidence Index</div>
               <div className="text-2xl font-black text-slate-900">
-                {((fusion?.fused_confidence ?? 0) * 100).toFixed(1)}%
+                {fusion?.fused_confidence == null ? "—" : `${(fusion.fused_confidence * 100).toFixed(1)}%`}
               </div>
             </div>
             <div className={`px-3.5 py-1.5 rounded-full text-xs font-bold border ${
@@ -284,11 +346,11 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
                        threshold={massBalance?.threshold} />
             <div className="flex justify-between text-slate-500">
               <span>Threshold (3σ):</span>
-              <span className="font-mono text-slate-700 font-semibold">{massBalance?.threshold ?? 0} L/min</span>
+              <span className="font-mono text-slate-700 font-semibold">{massBalance?.threshold == null ? "—" : `${massBalance.threshold} L/min`}</span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
-              <span className="font-extrabold text-blue-600">{((massBalance?.confidence ?? 0) * 100).toFixed(1)}%</span>
+              <span className="font-extrabold text-blue-600">{massBalance?.confidence == null ? "—" : `${(massBalance.confidence * 100).toFixed(1)}%`}</span>
             </div>
           </div>
         </div>
@@ -322,11 +384,11 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
                        threshold={currentSig?.expected_current_ma} />
             <div className="flex justify-between text-slate-500">
               <span>Transient ΔI:</span>
-              <span className="font-mono text-slate-700 font-semibold">{currentSig?.current_delta_ma ?? 0} mA</span>
+              <span className="font-mono text-slate-700 font-semibold">{currentSig?.current_delta_ma == null ? "—" : `${currentSig.current_delta_ma} mA`}</span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
-              <span className="font-extrabold text-purple-600">{((currentSig?.confidence ?? 0) * 100).toFixed(1)}%</span>
+              <span className="font-extrabold text-purple-600">{currentSig?.confidence == null ? "—" : `${(currentSig.confidence * 100).toFixed(1)}%`}</span>
             </div>
           </div>
         </div>
@@ -349,11 +411,11 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           <div className="space-y-2 text-xs">
             <div className="flex justify-between text-slate-500">
               <span>Quiet Baseline:</span>
-              <span className="font-mono text-slate-900 font-bold">0.00 L/min</span>
+              <span className="font-mono text-slate-900 font-bold">{mnf?.baseline_lpm == null ? "—" : `${Number(mnf.baseline_lpm).toFixed(2)} L/min`}</span>
             </div>
             <div className="flex justify-between text-slate-500">
               <span>Night Residual:</span>
-              <span className="font-mono text-slate-700 font-semibold">{mnf?.residual ?? 0.12} L/min</span>
+              <span className="font-mono text-slate-700 font-semibold">{mnf?.residual == null ? "—" : `${Number(mnf.residual).toFixed(3)} L/min`}</span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
@@ -408,7 +470,7 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
-              <span className="font-extrabold text-emerald-600">{((cusum?.confidence ?? 0) * 100).toFixed(1)}%</span>
+              <span className="font-extrabold text-emerald-600">{cusum?.confidence == null ? "—" : `${(cusum.confidence * 100).toFixed(1)}%`}</span>
             </div>
           </div>
         </div>
@@ -444,7 +506,7 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
               <span className="font-extrabold text-rose-600">
-                {((acoustic?.confidence ?? 0) * 100).toFixed(1)}%
+                {acoustic?.confidence == null ? "—" : `${(acoustic.confidence * 100).toFixed(1)}%`}
               </span>
             </div>
             {!acoustic?.active && (
@@ -465,7 +527,11 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
               <Cpu className="w-4 h-4 text-amber-600" />
               <h3 className="text-sm font-bold text-slate-900">Acoustic ML</h3>
             </div>
-            {!acousticMl?.active ? (
+            {mlAwaitingTraining ? (
+              <span className="text-[10px] bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300 px-2 py-0.5 rounded-full font-bold">
+                AWAITING TRAINING
+              </span>
+            ) : !acousticMl?.active ? (
               <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">UNAVAILABLE</span>
             ) : Boolean(acousticMl?.is_alarm) ? (
               <span className="text-[10px] bg-amber-600 text-white px-2 py-0.5 rounded-full font-bold">ALARM</span>
@@ -474,16 +540,20 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
             )}
           </div>
           <div className="space-y-2 text-xs">
-            <DeltaRow
-              label="Probability vs quiet baseline"
-              baseline={acousticMl?.baseline_probability}
-              current={acousticMl?.probability}
-              digits={3}
-              delta={deltas.ml.delta}
-              state={deltas.ml.state}
-            />
-            <Sparkline points={series.acoustic_ml ?? []} state={deltas.ml.state}
-                       threshold={acousticMl?.threshold} />
+            {!mlAwaitingTraining && (
+              <>
+                <DeltaRow
+                  label="Probability vs quiet baseline"
+                  baseline={acousticMl?.baseline_probability}
+                  current={acousticMl?.probability}
+                  digits={3}
+                  delta={deltas.ml.delta}
+                  state={deltas.ml.state}
+                />
+                <Sparkline points={series.acoustic_ml ?? []} state={deltas.ml.state}
+                           threshold={acousticMl?.threshold} />
+              </>
+            )}
             <div className="flex justify-between text-slate-500">
               <span>Pump Duty:</span>
               <span className="font-mono text-slate-700 font-semibold">
@@ -504,9 +574,21 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
                 Model: {modelProvenance?.note ?? "SYNTHETIC"} — demonstration, not a measurement of this rig.
               </p>
             )}
-            {!acousticMl?.active && acousticMl?.reason && (
+            {mlAwaitingTraining ? (
+              // The card stays VISIBLE in live mode — hiding it would erase the
+              // fact that this channel exists and is deliberately withheld.
+              <div className="text-[10px] text-sky-700 dark:text-sky-300 leading-snug pt-1 border-t border-slate-100 dark:border-slate-800 mt-2 space-y-1">
+                <p className="font-bold">Awaiting physical training data.</p>
+                <p className="text-slate-500 dark:text-slate-400">
+                  The loaded model was trained on generated data, so it describes the
+                  generator rather than this pipe. It is refused in live mode until a
+                  bundle trained on operator-logged leak events is loaded. No score is
+                  shown because none would be meaningful.
+                </p>
+              </div>
+            ) : !acousticMl?.active && acousticMl?.reason ? (
               <p className="text-[10px] text-slate-400 leading-snug pt-1">{acousticMl.reason}</p>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -541,7 +623,7 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
               <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
                 <span className="text-slate-500 font-medium">Channel Confidence:</span>
                 <span className="font-extrabold text-violet-600">
-                  {((pressure?.confidence ?? 0) * 100).toFixed(1)}%
+                  {pressure?.confidence == null ? "—" : `${(pressure.confidence * 100).toFixed(1)}%`}
                 </span>
               </div>
               {/* Same rule as the ML marker: quiet, but always present. */}
@@ -567,17 +649,25 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
             : "Loading fusion configuration…"}
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-xs">
-          {WEIGHT_ROWS.map(({ key, label, tone }) => (
-            <div key={key} className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
-              <div className="text-slate-500 font-medium">{label}</div>
-              <div className={`text-xl font-extrabold mt-1 ${tone}`}>
-                {config?.weights?.[key] != null
-                  ? `${(config.weights[key] * 100).toFixed(0)}%`
-                  : "—"}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 text-xs">
+          {(Object.entries(config?.weights ?? {}) as [string, number][])
+            .sort((a, b) => b[1] - a[1])
+            .map(([key, weight]) => (
+              <div key={key} className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200/70 dark:border-slate-700">
+                <div className="text-slate-500 dark:text-slate-400 font-medium">
+                  {CHANNEL_LABELS[key] ?? key}
+                  {key === "pressure_drop" && (
+                    <span className="ml-1 text-[9px] text-violet-500">SIM</span>
+                  )}
+                </div>
+                <div className={`text-xl font-extrabold mt-1 ${WEIGHT_TONES[key] ?? "text-slate-600"}`}>
+                  {(weight * 100).toFixed(0)}%
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          {!config?.weights && (
+            <div className="col-span-full text-slate-400">Loading fusion configuration…</div>
+          )}
         </div>
 
         {config?.thresholds && (
