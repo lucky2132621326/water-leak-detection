@@ -2,46 +2,44 @@
 #define MQTT_CLIENT_H
 
 #include <Arduino.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
 #include "vibration_sensor.h"
+#include "piezo_sensor.h"
 
-// MQTT transport for the sensor node.
-//
-// Publishes the nested telemetry contract in docs/MQTT_SPEC.md (spec Part G) on
-// `rig/telemetry`, subscribes to `rig/cmd`, and keeps a retained `rig/status`
-// with a Last Will so the dashboard can tell "offline" from "quiet".
-
-// hasPump1/hasPump2/hasServo distinguish "absent from the payload" from
-// "present and false". A command that only mentions the servo must not be read
-// as an instruction to stop both pumps.
-typedef void (*CommandHandler)(bool hasPump1, bool pump1,
-                               bool hasPump2, bool pump2,
-                               bool hasServo, int servoDeg);
+// Forward-declared so main.cpp can wire valve/pump commands received on
+// rig/cmd back into the RelayController/ServoController instances without
+// this class needing to know about them directly.
+typedef void (*CommandCallback)(bool pump1, bool pump2, int servoDeg);
 
 class MQTTHandler {
-public:
-    void begin(CommandHandler handler);
-    void loop();
-
-    // `clockSynced` false means NTP has not completed and `ts` is not
-    // meaningful. The field is published as 0 in that case rather than filled
-    // with uptime, which would put a different epoch in the same field and be
-    // undetectable downstream.
-    void publishTelemetry(double ts, bool clockSynced,
-                          float qIn, float qOut, float qBranch,
-                          uint32_t pulsesIn, uint32_t pulsesOut, uint32_t pulsesBranch,
-                          float busV, float currentMA, float powerMW,
-                          const VibrationSample& vib,
-                          float waterC, bool tempPresent,
-                          bool pump1, bool pump2, int servoDeg,
-                          uint32_t uptimeSec);
-
-    void publishStatus(const char* state);
-    bool isConnected();
-
 private:
-    CommandHandler onCommand = nullptr;
-    void connectWiFi();
+    WiFiClient wifiClient;
+    PubSubClient client;
+    const char* deviceId;
+    unsigned long lastReconnectAttempt;
+    CommandCallback onCommand;
+
     void reconnect();
+
+public:
+    MQTTHandler();
+    void connectWiFi(const char* ssid, const char* password);
+    void connectMQTT(const char* broker, int port, const char* clientID);
+    void setCommandCallback(CommandCallback cb);
+    // Public so the free-function PubSubClient callback can reach it —
+    // PubSubClient only supports a plain function pointer, not a member fn.
+    void handleMessage(char* topic, byte* payload, unsigned int length);
+    void loop();
+    bool isConnected();
+    void publishTelemetry(unsigned long ts, uint32_t seq, float qIn, float qOut, float qBranch,
+                           float currentMA, float voltageV,
+                           uint32_t rawPulsesIn, uint32_t rawPulsesOut, uint32_t rawPulsesBranch,
+                           bool pump1On, bool pump2On, int servoDeg,
+                           unsigned long uptimeSec, int wifiRssi, uint32_t freeHeap,
+                           const VibrationSample& vibration, const PiezoSample& piezo, bool vibrationValid,
+                           float waterTempC);
+    void publishStatus(int wifiRssi, unsigned long uptimeSec, uint32_t heapFree);
 };
 
-#endif  // MQTT_CLIENT_H
+#endif

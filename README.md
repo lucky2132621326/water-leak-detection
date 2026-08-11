@@ -1,49 +1,75 @@
-# Water Leak Detection System (Hardware-In-The-Loop & Analytics Workbench)
+# Smart Water Leak Detection
 
-A high-reliability, real-time water pipeline leak detection system combining physical test rig telemetry (ESP32), multi-algorithm sensor fusion (Mass Balance, Current Signature, CUSUM, MNF), explainable confidence evaluation, branch isolation localization, and a full-stack Web Workbench & Dashboard.
+An explainable hardware-in-the-loop platform for detecting and localizing
+probable water leaks from flow imbalance, pump-current signatures, CUSUM drift,
+and minimum-night-flow evidence.
 
----
+Confirmed live incidents can optionally send one deduplicated Twilio WhatsApp
+Content Template message. Credentials remain in `.env`, and replay notifications
+are disabled by default. See `docs/WHATSAPP_ALERTS.md`.
 
-## 🛠️ Prerequisites & Installation Requirements
+This is decision-support software: every result includes confidence, evidence,
+a false-positive warning, and a field-verification requirement. The dashboard
+does not expose operational pump or valve controls.
 
-Before running the application or physical rig components, ensure the following prerequisites are installed on your environment:
+## What makes the system credible
 
-### 1. System Runtime Requirements
-* **Node.js**: `v18.x` or `v20.x` (LTS recommended)
-* **npm**: `v9.x` or higher
-* **Python**: `3.9+` (with `pip` package manager)
-* **Docker Desktop**: provides MongoDB (and optionally the MQTT broker) via
-  `docker-compose.yml` — see Step 3. Install from
-  [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
-  or `brew install --cask docker`.
-* **Firmware (Optional for Physical Rig)**: PlatformIO CLI or Arduino IDE with ESP32 board support packages
+- One detection pipeline for ESP32 live telemetry and historical replay.
+- Exact raw pulse counts are stored beside converted flow values.
+- Four independent detectors feed a weighted sensor-fusion decision.
+- Leak likelihood, time window, suspected zone, and evidence are returned in a
+  stable API contract.
+- Physical leak start/stop is logged separately as millisecond-precision ground
+  truth for precision, recall, F1, and detection-latency measurement.
+- MQTT Last Will, device freshness, MongoDB health, and simulation/live state
+  are visible rather than replaced by plausible fake values.
+- Firmware safety is local: pumps boot OFF, incomplete commands are rejected,
+  and command/runtime watchdogs do not depend on the network.
+- Impact analysis, an Alert Center, and printable experiment reports are built
+  dependency-free — no extra packages beyond `requirements.txt`.
 
-> **MongoDB and Mosquitto are no longer installed per-machine.** They run as
-> containers so every developer gets identical versions with one command. A
-> pre-existing Homebrew install still works — Docker publishes the same default
-> ports — but the two cannot run at once (see Troubleshooting).
+## Architecture
 
----
+```text
+ESP32 sensors (3× flow + INA219 + actuator state)
+                    │  MQTT / rig/telemetry @ 1 Hz
+                    ▼
+FastAPI ingestion → validation → MongoDB + JSONL evidence log
+                    │
+                    ├─ mass balance (bias + persistence)
+                    ├─ motor-current signature
+                    ├─ CUSUM change detection
+                    └─ minimum night flow
+                    │
+                    ▼
+       fusion → confidence → localization → work-order brief
+                    │
+                    ▼
+             React decision-support dashboard
+```
 
-## 📦 Installation Guide
+The physical topology is `recombined_branch`: Branch A and B rejoin before
+`Q_out`, so `Q_branch` is a localization/demand feature and is not subtracted a
+second time from the main mass balance. See
+[`docs/HARDWARE_INTEGRATION_SPEC.md`](docs/HARDWARE_INTEGRATION_SPEC.md).
 
-### Step 1: Install Node.js Dependencies (Dashboard & Server)
+## Quick start
 
-In the project root directory, run:
+Requirements: Node.js 18+, Python 3.9+, MongoDB, and (for live hardware or the
+mock MQTT stream) a Mosquitto-compatible broker on port 1883.
 
 ```bash
 npm install
 ```
 
-This installs Express, React 19, Recharts, Lucide React, Vite, Tailwind CSS, motion, tsx, and type declarations.
+This installs Express, React 19, Recharts, Lucide React, Vite, Tailwind CSS,
+motion, tsx, and type declarations.
 
----
-
-### Step 2: Install Python Backend Dependencies
+### Python backend dependencies
 
 Create a virtual environment first. This is **required**, not optional: modern
-Homebrew/Debian Python installs are PEP 668 "externally managed" and will refuse
-a bare `pip install` with an `externally-managed-environment` error.
+Homebrew/Debian Python installs are PEP 668 "externally managed" and will
+refuse a bare `pip install` with an `externally-managed-environment` error.
 
 ```bash
 python3 -m venv .venv
@@ -59,47 +85,13 @@ Then install the required Python packages:
 
 ```bash
 pip install -r requirements.txt
+python scripts/init_db.py
 ```
 
 > Activating the venv is also what makes the bare `python` command in this
 > README resolve — macOS ships `python3` only, so an unactivated shell fails
 > with `command not found: python`. On Windows the activate command is
 > `.venv\Scripts\activate`.
-
----
-
-### Step 3: Start MongoDB (Docker)
-
-With Docker Desktop running, bring up the database from the project root:
-
-```bash
-docker compose up -d
-```
-
-This starts MongoDB 7.0 as container `wld-mongo`, published on the standard
-`localhost:27017`. Data persists in a Docker named volume (`mongo_data`), so it
-survives restarts and `docker compose down`.
-
-Confirm it is accepting connections:
-
-```bash
-docker compose ps
-```
-
-`STATUS` should read `Up ... (healthy)`. To block until it is ready — useful in
-scripts and CI — start it with `docker compose up -d --wait` instead.
-
-**Optional — MQTT broker for Live Sensor Mode.** Mock Data Mode, the dashboard
-and the whole test suite do not need this, so it is behind a profile and stays
-stopped unless you ask for it:
-
-```bash
-docker compose --profile live up -d
-```
-
-> **No application configuration is required.** `backend/repositories/db.py`
-> already defaults to `mongodb://localhost:27017`, which is exactly what the
-> container publishes. Set `MONGO_URI` only if you deliberately remap the port.
 
 *Required Python libraries installed:*
 * `pyyaml`: Configuration parsing
@@ -111,190 +103,175 @@ docker compose --profile live up -d
 * `openai`: Azure OpenAI work-order summaries (optional — falls back to
   deterministic templates when `AZURE_OPENAI_API_KEY` is unset)
 
-> **No additional packages are needed for the impact analysis, Alert Center or
-> automatic experiment reports.** Those were built deliberately dependency-free:
-> reports render as printable HTML with hand-rolled inline SVG charts rather than
-> pulling in a PDF/plotting toolchain, so `requirements.txt` is unchanged.
+## 🚀 Quick start (replay mode — no hardware required)
 
----
+`npm run dev` (`scripts/dev.mjs`) starts **both** processes together: the
+Python detection API on port `8001` and the Express/Vite web server on port
+`3000`, with combined logs and a shared shutdown on Ctrl+C. Express is only a
+thin proxy — if the Python service fails to start, every view returns
+`502 Detection backend unreachable` and renders empty; check the API's half of
+the combined log output first.
 
-## 🚀 Quick Start (Mock Data Mode — no hardware required)
-
-The dashboard needs **two processes**: the Python detection API on port `8000`
-and the Express/Vite web server on port `3000`. Express is only a thin proxy —
-if the Python service isn't running, every view returns
-`502 Detection backend unreachable` and renders empty.
-
-Make sure MongoDB is running (`docker compose up -d`, see Step 3) and your
-virtual environment is activated (`source .venv/bin/activate`, see Step 2),
-then:
-
-**Step 1 — start the detection API** (terminal 1):
+Make sure MongoDB is running first (`brew services start mongodb-community` on
+macOS), and that your virtual environment is activated
+(`source .venv/bin/activate`), then from the repository root:
 
 ```bash
-python -m uvicorn backend.api_server:app --host 127.0.0.1 --port 8000 --reload
-```
-
-**Step 2 — start the dashboard** (terminal 2):
-
-```bash
+python -m backend.replay.seed_runs   # 300 samples + a ground-truth leak window,
+                                      # so Replay mode has real data before any
+                                      # hardware exists
 npm run dev
 ```
 
-Open **http://localhost:3000**. The system boots into **Mock Data Mode** and
-streams a generated leak scenario through the real detection pipeline, so leak
-alerts, severity and cost impact appear on their own.
+Or do both in one command: `npm run demo`.
 
-Use the **Mock Scenarios** tab to pick a different scenario (small/large/gradual
-leak, branch-specific, night flow, sensor faults) or to score all ten against
-their known ground truth. Switch to **Live Sensor Mode** from the header badge
-once a rig is publishing — everything after ingestion is the identical pipeline.
-See `docs/OPERATING_MODES.md`.
+Open **http://localhost:3000**. The system defaults to Replay mode and loops
+the seeded run through the real detection pipeline, so leak alerts, severity,
+and cost impact appear on their own roughly every 75 seconds.
 
-> **Run both commands from the repository root.** `config_loader.py` resolves
-> `backend/config/*.yaml` by relative path, so launching uvicorn from inside
-> `backend/` silently falls back to hardcoded defaults instead of your YAML.
+> Port `8001`, not `8000` — on at least one dev machine an unrelated app was
+> already bound to `8000`, so `8001` is the project default everywhere
+> (`.env.example`, `scripts/dev.mjs`, `backend/api_server.py`). Override with
+> `API_PORT` / `PORT` / `FASTAPI_BASE_URL` in `.env` if your setup differs.
 
-> **Live Sensor Mode requires an MQTT broker** on port `1883`
-> (`docker compose --profile live up -d`). Without it the backend reports the
-> broker unreachable and Mock Data Mode works normally — this is not a failure.
+> **Run `npm run dev` from the repository root.** `config_loader.py` resolves
+> `backend/config/*.yaml` by relative path, so an API process launched from
+> inside `backend/` silently falls back to hardcoded defaults instead of your
+> YAML — `scripts/dev.mjs` already does this correctly.
 
-### Stopping
+> **Live mode requires an MQTT broker** on port `1883`
+> (`brew install mosquitto && brew services start mosquitto`). Without it the
+> backend logs a single startup warning and Replay mode works normally — this
+> is not a failure. Live and Replay run through the identical
+> `DetectionPipeline`.
 
-Stop the app servers with `Ctrl+C` in each terminal. Then stop the containers:
+## Running commands
 
-```bash
-docker compose down
-```
+### 1. System self-diagnostic test
 
-Your database is preserved. To wipe it entirely (Mock Data Mode regenerates its
-own scenarios, so nothing needs re-seeding) use:
-
-```bash
-docker compose down -v
-```
-
----
-
-## 🚀 Running Commands
-
-### 1. System Self-Diagnostic Test
-Before starting the web app or connecting hardware, verify all backend modules (Config Loader, Telemetry Validator, Detector Engine, State Machine, Fusion & Confidence Engine, Localization Service):
+Before starting the web app or connecting hardware, verify all backend
+modules (Config Loader, Telemetry Validator, Detector Engine, State Machine,
+Fusion & Confidence Engine, Localization Service):
 
 ```bash
 python backend/self_test/system_self_test.py
 ```
 
----
+### 2. Hardware unit test scripts
 
-### 2. Hardware Unit Test Scripts
 Test individual sensor and actuator interfaces:
 
 ```bash
-# Test YF-S201 Flow Sensor #1 calculation logic
-python tests/test_flow1.py
-
-# Test INA219 Motor Current & Voltage sampling logic
-python tests/test_ina219.py
-
-# Test Servo Motor isolation PWM commands
-python tests/test_servo.py
-
-# Test Relay Pump toggle signals
-python tests/test_pump.py
+python tests/test_flow1.py    # YF-S201 Flow Sensor #1 calculation logic
+python tests/test_ina219.py   # INA219 Motor Current & Voltage sampling logic
+python tests/test_servo.py    # Servo Motor isolation PWM commands
+python tests/test_pump.py     # Relay Pump toggle signals
 ```
 
----
-
-### 3. Backend Logic Test Suites
+### 3. Backend logic test suites
 
 Unit tests for the detection and impact logic (these need no hardware; the
 alert tests need no MongoDB either):
 
 ```bash
-python -m unittest discover -s tests -p "test_*.py"
+python -m pytest -q
+# or: python -m unittest discover -s tests -p "test_*.py"
 ```
 
-Covers the 3-sigma mass balance detector, the impact arithmetic (water loss,
-cost, severity bands, progression) and the alert lifecycle (incident merging,
+Covers the 3-sigma mass balance detector, CUSUM recovery, localization
+baseline tracking, topology-aware residuals, the hardware-owner MQTT packet
+and legacy packet compatibility, the impact arithmetic (water loss, cost,
+severity bands, progression), and the alert lifecycle (incident merging,
 replay idempotency, savings crediting, query filters).
 
----
+### 4. Build for production
 
-### 4. Start Development Web Workbench (Full-Stack Express + Vite)
-
-Serves the React dashboard and proxies `/api/*` to the Python detection service:
-
-```bash
-npm run dev
-```
-
-* Access the live dashboard at: `http://localhost:3000`
-* **Requires `backend.api_server` running on port `8000`** — see Quick Start
-  above. Express does not evaluate telemetry itself; it forwards every API call.
-
----
-
-### 5. Build for Production
-
-To compile the React client assets and bundle `server.ts` into a standalone CommonJS bundle (`dist/server.cjs`):
+Compile the React client assets and bundle `server.ts` into a standalone
+CommonJS bundle (`dist/server.cjs`):
 
 ```bash
 npm run build
-```
-
----
-
-### 6. Start Production Server
-
-Launch the compiled production bundle:
-
-```bash
 npm run start
 ```
 
----
+## Deterministic demo dataset
 
-## ⚙️ Configuration Setup
-
-System parameters and thresholds are dynamically configured in `backend/config/settings.yaml`:
-
-```yaml
-mqtt:
-  host: "localhost"
-  port: 1883
-  topic: "rig/telemetry"
-  cmd_topic: "rig/cmd"
-
-database:
-  uri: "mongodb://localhost:27017"
-  name: "water_leak_detection"
-
-detector:
-  sigma_multiplier: 3.0
-  persistence_seconds: 10
-  bias_lpm: 0.10
-  current_drop_threshold_ma: 20.0
-  cusum_slack_k: 0.15
-  cusum_decision_h: 3.0
+```bash
+npm run demo
 ```
 
-> **Careful with `database.uri`:** `backend/repositories/db.py` reads the
-> `MONGO_URI` **environment variable** (falling back to
-> `mongodb://localhost:27017`) and does *not* consult this YAML block. Editing
-> `database.uri` here has no effect on where the backend actually connects. The
-> default already matches what `docker compose up -d` publishes, so for normal
-> development neither needs touching.
+## Temporary judge deployment
 
----
+`npm run demo:public` creates a hybrid hackathon deployment: the rig stack
+stays on this laptop, a local operator dashboard remains on port 3000, and a
+second read-only judge dashboard is exposed through a temporary Cloudflare
+Quick Tunnel. If MQTT is unavailable it remains honestly in Replay mode.
 
-## 🔌 Hardware Setup & Firmware Flashing
+See [`docs/PUBLIC_DEMO_DEPLOYMENT.md`](docs/PUBLIC_DEMO_DEPLOYMENT.md) for
+the security boundary, private-broker setup, and launch checklist.
 
-1. Connect ESP32 DevKit V1 to (see `docs/HARDWARE_SETUP.md` / `firmware/docs/PINOUT.md` — source of truth, matches `firmware/src/config.h`):
-   - **YF-S201 Flow Sensors**: GPIO 34 ($Q_{\text{in}}$), GPIO 35 ($Q_{\text{out}}$), GPIO 32 ($Q_{\text{branch}}$)
-   - **INA219 Current Sensor**: I2C SDA (GPIO 21) / SCL (GPIO 22)
-   - **Relays (Pump / Leak Solenoid)**: GPIO 25 & GPIO 26
-   - **Servo Isolation Actuator**: PWM GPIO 27
-   - No physical pressure sensor is installed; `pressure_bar` is estimated server-side from flow/pump state.
-2. Open `firmware/` in PlatformIO (`platformio.ini` targets `esp32dev`).
-3. `pio run --target upload` to flash, `pio device monitor` to view logs.
+Runtime values can be copied from `.env.example`. Defaults are FastAPI
+`8001`, web `3000`, MongoDB `27017`, and MQTT `1883`.
+
+## Verify before a demo
+
+```bash
+python -m pytest -q
+python backend/self_test/system_self_test.py
+npm run lint
+npm run build
+```
+
+## ESP32 commissioning order
+
+1. Wire only Flow 1 to GPIO 34 through the required level divider.
+2. Flash `firmware/serial_test/serial_test.ino` and verify pulses once per
+   second before connecting Wi-Fi, MQTT, relays, or I2C.
+3. Copy `firmware/src/secrets.example.h` to the Git-ignored `secrets.h`; set the
+   demo Wi-Fi and the laptop's LAN address as `MQTT_BROKER`.
+4. Build and flash `firmware/` with PlatformIO.
+5. Verify retained `rig/status`, then inspect one `rig/telemetry` packet against
+   [`docs/MQTT_SPEC.md`](docs/MQTT_SPEC.md).
+6. Confirm both active-low pump relays boot OFF and the 30-second watchdog turns
+   them off without a fresh supervised command.
+7. Run a zero-leak calibration before trusting thresholds or latency metrics.
+
+```bash
+pio run -d firmware
+pio run -d firmware --target upload
+pio device monitor -d firmware
+```
+
+## Mock hardware stream
+
+The mock publisher uses the exact nested hardware schema and identifies itself
+as `mock-rig-01`, allowing the UI to remain visibly in simulation mode.
+
+```bash
+python tools/mock_publisher.py --duration-s 120
+python tools/mock_publisher.py --leak-lpm 0.5 --leak-start-s 30 --leak-duration-s 45
+```
+
+Mock frames are never counted as physical evidence in the independent live
+JSONL hardware log.
+
+## MQTT topics
+
+- `rig/telemetry`: nested sensor frame at 1 Hz, QoS 1, not retained.
+- `rig/status`: device state/health, retained, with an `OFFLINE` Last Will.
+- `rig/cmd`: supervised lab-rig command containing all of `pump1`, `pump2`, and
+  `servo_deg`; firmware rejects partial commands.
+
+The canonical schemas are in [`docs/MQTT_SPEC.md`](docs/MQTT_SPEC.md). Network
+credentials live only in `firmware/src/secrets.h`, which is excluded from Git
+and from the dashboard's repository viewer.
+
+## Safety and interpretation
+
+- A high likelihood is not proof of a leak.
+- Field verification is required before repair or isolation work.
+- Estimated pressure is clearly tagged because the current rig has no pressure
+  transducer.
+- The public dashboard provides no operational valve-control instructions.
+- Physical ground-truth logging is enabled only when a fresh, non-mock ESP32
+  stream is active in live mode.

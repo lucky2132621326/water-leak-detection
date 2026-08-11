@@ -4,21 +4,67 @@ export interface TelemetrySample {
   q_out: number;
   q_branch: number;
   current_ma: number;
-  bus_v: number;
+  /** Raw bus voltage provided by the hardware telemetry schema. */
+  bus_v?: number;
+  voltage_v: number;
+  pressure_bar: number;
   residual: number;
-  /** Acoustic band energies. null when no MPU6050 / piezo is fitted — which is
-   *  a different fact from zero, and must not be rendered as a reading. */
-  band_mid: number | null;
-  vib_rms: number | null;
-  piezo_rms: number | null;
-  water_c: number | null;
-  /** GROUND TRUTH: an operator-logged clamp is open right now. Never the
-   *  detector's opinion — that is what makes "detector says clear while a clamp
-   *  is open" an honest thing for the dashboard to show. */
+  /** Optional vibration/acoustic channels. A missing sensor is represented as
+   * null rather than a fabricated zero-valued reading. */
+  band_mid?: number | null;
+  vib_rms?: number | null;
+  piezo_rms?: number | null;
+  water_c?: number | null;
   leak_active: boolean;
+  pump_on?: boolean;
+  pump1_on?: boolean;
+  pump2_on?: boolean;
+  servo_deg?: number;
+  device_id?: string;
+  ts_source?: "device_ntp" | "server_received" | "logged";
+}
+
+export interface DeviceHealth {
+  online: boolean;
+  device_id: string;
+  last_seen_ts: number | null;
+  last_seen_age_sec: number | null;
+  uptime_sec: number | null;
+  wifi_rssi: number | null;
+  heap_free: number | null;
+  samples_received: number;
+}
+
+export interface SystemHealth {
+  status: "ok" | "degraded" | "error";
+  mode: "live" | "replay";
+  mqtt_connected: boolean;
+  database_connected: boolean;
+  telemetry_records: number;
+  data_source_ready: boolean;
+  simulation_mode: boolean;
+  replay_run_id: string | null;
+  timestamp: number;
+  device: DeviceHealth;
+  message?: string;
+}
+
+export interface RuntimeCapabilities {
+  audience: "operator" | "judge";
+  read_only: boolean;
+  mutations_allowed: boolean;
+}
+
+export interface TelemetryEnvelope {
+  mode: "live" | "replay";
+  latest: TelemetrySample | null;
   pump_on: boolean;
-  pump2_on: boolean;
-  servo_deg: number;
+  pump1_on?: boolean;
+  pump2_on?: boolean;
+  leak_active: boolean;
+  evaluation: any | null;
+  leak_rate_lpm?: number;
+  impact?: ImpactSummary | null;
 }
 
 export interface DetectorOutput {
@@ -39,7 +85,7 @@ export interface DetectionEval {
     mass_balance: DetectorOutput;
     current_signature: DetectorOutput;
     mnf: DetectorOutput;
-    acoustic: DetectorOutput;
+    acoustic?: DetectorOutput;
     cusum: DetectorOutput;
   };
   fusion: {
@@ -189,6 +235,57 @@ export interface ImpactConfig {
   equivalents: Record<string, number>;
 }
 
+// --- Mock-scenario contracts ----------------------------------------------
+// The components are retained for the mock-pipeline workflow. Production
+// deployments use the newer live/replay endpoints, so these are intentionally
+// additive rather than widening the operational mode used by App.tsx.
+export type OperatingMode = "mock" | "live";
+
+export interface ScenarioSummary {
+  id: string;
+  name: string;
+  description: string;
+  duration_sec: number;
+  leak_count: number;
+  fault_count: number;
+  max_leak_lpm: number;
+  start_time: string | null;
+  demand_mode: "steady" | "variable";
+  emits_vibration: boolean;
+  emits_piezo: boolean;
+  expect_detection: boolean;
+  expect_zone: string | null;
+}
+
+export interface ScenarioRunResult {
+  success: boolean;
+  scenario_id: string;
+  scenario_name: string;
+  run_id: string;
+  samples: number;
+  verdict: string;
+  persisted: boolean;
+  metrics: {
+    true_positives: number; false_positives: number;
+    false_negatives: number; true_negatives: number;
+    precision: number | null; recall: number | null;
+    f1_score: number | null; detection_latency_sec: number | null;
+  };
+  expected: { expect_detection: boolean; expect_zone: string | null };
+}
+
+export interface ModeState {
+  mode: OperatingMode;
+  modes: OperatingMode[];
+  source: {
+    source: string; running: boolean;
+    scenario?: ScenarioSummary; speed?: number; loop?: boolean;
+    broker?: string; topic?: string;
+  };
+  sample_count: number;
+  rejected_count: number;
+}
+
 // --- Alert Center (backend/alerts/*) ----------------------------------------
 
 export type AlertStatus = "ACTIVE" | "RESOLVED" | "FALSE_POSITIVE";
@@ -202,7 +299,7 @@ export interface WorkOrderSummary {
 export interface LeakAlert {
   alert_id: string;
   seq: number;
-  source: "live" | "mock";
+  source: "live" | "replay" | "mock";
   run_id: string | null;
   status: AlertStatus;
   is_open: boolean;
@@ -310,56 +407,4 @@ export interface ExperimentReport {
   impact: ImpactAnalysis;
   conclusions: string[];
   disclaimer: string;
-}
-
-
-// --- Operating modes ---------------------------------------------------------
-
-/** Exactly two. They differ only in where telemetry originates; everything
- *  after ingestion is one shared pipeline. */
-export type OperatingMode = "mock" | "live";
-
-export interface ScenarioSummary {
-  id: string;
-  name: string;
-  description: string;
-  duration_sec: number;
-  leak_count: number;
-  fault_count: number;
-  max_leak_lpm: number;
-  start_time: string | null;
-  demand_mode: "steady" | "variable";
-  emits_vibration: boolean;
-  emits_piezo: boolean;
-  expect_detection: boolean;
-  expect_zone: string | null;
-}
-
-export interface ScenarioRunResult {
-  success: boolean;
-  scenario_id: string;
-  scenario_name: string;
-  run_id: string;
-  samples: number;
-  verdict: string;
-  persisted: boolean;
-  metrics: {
-    true_positives: number; false_positives: number;
-    false_negatives: number; true_negatives: number;
-    precision: number | null; recall: number | null;
-    f1_score: number | null; detection_latency_sec: number | null;
-  };
-  expected: { expect_detection: boolean; expect_zone: string | null };
-}
-
-export interface ModeState {
-  mode: OperatingMode;
-  modes: OperatingMode[];
-  source: {
-    source: string; running: boolean;
-    scenario?: ScenarioSummary; speed?: number; loop?: boolean;
-    broker?: string; topic?: string;
-  };
-  sample_count: number;
-  rejected_count: number;
 }

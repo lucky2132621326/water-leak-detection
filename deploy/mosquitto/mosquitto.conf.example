@@ -1,0 +1,15 @@
+# Hackathon LAN broker template. Replace the two placeholder paths with
+# absolute paths outside the Git repository after generating the password
+# file with mosquitto_passwd.
+listener 1883 0.0.0.0
+allow_anonymous false
+password_file C:/PRIVATE_RUNTIME/mosquitto/passwords
+acl_file C:/PRIVATE_RUNTIME/mosquitto/acl
+
+persistence true
+persistence_location C:/PRIVATE_RUNTIME/mosquitto/data/
+log_dest stdout
+connection_messages true
+
+# Do not add a WebSocket listener and do not tunnel this port. Restrict the
+# Windows Firewall rule to the private rig/hotspot subnet.

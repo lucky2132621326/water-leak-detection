@@ -1,100 +1,33 @@
-import React, { useEffect, useState } from "react";
-import { ShieldAlert, Zap, Moon, Activity, Cpu, Scale, Gauge } from "lucide-react";
+import React from "react";
+import { ShieldAlert, Zap, Moon, Activity, Cpu, Scale, Waves } from "lucide-react";
 
 interface DetectionEngineViewProps {
   evaluation: any;
 }
 
-const WEIGHT_ROWS = [
-  { key: "mass_balance", label: "Mass Balance Weight", tone: "text-blue-600" },
-  { key: "pressure_drop", label: "Pressure Drop Weight", tone: "text-rose-600" },
-  { key: "current_signature", label: "Motor Current Weight", tone: "text-purple-600" },
-  { key: "mnf", label: "MNF Baseline Weight", tone: "text-amber-600" },
-  { key: "cusum", label: "CUSUM Drift Weight", tone: "text-emerald-600" },
-];
-
-const THRESHOLD_LABELS: Record<string, string> = {
-  mass_balance_sigma: "Mass balance sigma",
-  mass_balance_persistence_samples: "Persistence (samples)",
-  current_drop_ma: "Current drop (mA)",
-  cusum_k: "CUSUM slack k",
-  cusum_h: "CUSUM decision h",
-  mnf_window: "MNF night window",
-};
-
-interface PlausibilityGuardConfig {
-  enabled: boolean;
-  current_ma_per_leak_lpm: number;
-  pressure_bar_per_leak_lpm: number;
-  margin: number;
-  min_residual_lpm: number;
-  rule: string;
-}
-
-interface DetectorConfig {
-  weights: Record<string, number>;
-  formula: string;
-  thresholds: Record<string, string | number>;
-  plausibility_guard?: PlausibilityGuardConfig;
-}
-
 export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evaluation }) => {
-  const [config, setConfig] = useState<DetectorConfig | null>(null);
-
-  // Fusion weights and thresholds are config, not telemetry — fetch once.
-  useEffect(() => {
-    fetch("/api/detectors/config")
-      .then((r) => r.json())
-      .then(setConfig)
-      .catch(() => setConfig(null));
-  }, []);
-
   const detectors = evaluation?.detectors;
   const fusion = evaluation?.fusion;
-  const sensorFault = evaluation?.sensor_fault;
+  const vibration = evaluation?.vibration;
 
   const massBalance = detectors?.mass_balance;
   const currentSig = detectors?.current_signature;
   const mnf = detectors?.mnf;
   const cusum = detectors?.cusum;
-  const pressureDrop = detectors?.pressure_drop;
+  const acoustic = detectors?.acoustic;
 
   return (
     <div className="space-y-6">
-      {/* A withheld alarm must never look like an all-clear. The flow meters are
-          claiming a leak the pump and pressure channels say is impossible, which
-          means an instrument has almost certainly failed — the operator needs
-          that, not silence. */}
-      {sensorFault?.is_fault && (
-        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-5">
-          <h3 className="text-sm font-bold text-amber-900 flex items-center space-x-2">
-            <Gauge className="w-4 h-4" />
-            <span>Instrument Fault — leak alarm withheld</span>
-          </h3>
-          <p className="text-xs text-amber-800 mt-2 leading-relaxed">
-            {sensorFault.hypothesis}
-          </p>
-          <p className="text-[11px] text-amber-700/90 mt-2 font-mono leading-relaxed">
-            {sensorFault.detail}
-          </p>
-          {sensorFault.contradicting_channels?.length > 0 && (
-            <p className="text-[11px] text-amber-700/80 mt-2">
-              Contradicted by: {sensorFault.contradicting_channels.join(", ")}
-            </p>
-          )}
-        </div>
-      )}
-
       {/* Banner */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2 tracking-tight">
               <ShieldAlert className="w-6 h-6 text-rose-600" />
-              <span>Phase 2 & 3: Multi-Algorithm Detection & Sensor Fusion Engine</span>
+              <span>Explainable Detection & Sensor Fusion</span>
             </h2>
             <p className="text-xs text-slate-500 mt-1">
-              Parallel evaluation of Mass Balance (3-Sigma), Motor Current Signatures, Minimum Night Flow, and CUSUM residual cumulative sum.
+              Parallel evaluation of Mass Balance (3-Sigma), Motor Current Signatures, Minimum Night Flow, CUSUM residual cumulative sum, and Acoustic (MPU6050 + piezo) leak signature.
             </p>
           </div>
 
@@ -106,28 +39,49 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
               </div>
             </div>
             <div className={`px-3.5 py-1.5 rounded-full text-xs font-bold border ${
-              Boolean(fusion?.is_alarm)
+              fusion?.is_alarm ?? false
                 ? "bg-rose-100 text-rose-700 border-rose-200 animate-pulse"
                 : "bg-emerald-100 text-emerald-700 border-emerald-200"
             }`}>
-              {fusion?.severity || "NONE"}
+              {fusion?.is_alarm ? (fusion?.severity || "ALARM") : "MONITORING"}
             </div>
           </div>
         </div>
       </div>
 
-      {/* 4 Detectors Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-5">
+      <div className={`border rounded-2xl p-5 ${evaluation?.is_alarm ? "bg-rose-50 border-rose-200" : "bg-emerald-50 border-emerald-200"}`}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className={`text-xs font-black uppercase tracking-wider ${evaluation?.is_alarm ? "text-rose-700" : "text-emerald-700"}`}>
+              {evaluation?.is_alarm ? "Likely leak event" : "No confirmed event"}
+            </div>
+            <p className="text-sm font-semibold text-slate-800 mt-1">{evaluation?.evidence || "Waiting for an evaluated telemetry sample."}</p>
+          </div>
+          <div className="text-right text-xs text-slate-600">
+            <div><span className="font-bold">Zone:</span> {evaluation?.zone || "NONE"}</div>
+            <div><span className="font-bold">Window:</span> {evaluation?.time_window ? `${evaluation.time_window.duration_sec}s` : "not active"}</div>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-500 mt-3">{evaluation?.false_positive_warning?.disclaimer || "Results are indicative only; field verification is required."}</p>
+        {fusion?.independent_agreement && (
+          <p className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5 mt-2 inline-block">
+            Flow/current evidence corroborated by an independent acoustic signature
+          </p>
+        )}
+      </div>
+
+      {/* 5 Detectors Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {/* 1. Mass Balance */}
         <div className={`bg-white border rounded-2xl p-5 shadow-xs transition ${
-          Boolean(massBalance?.is_alarm) ? "border-rose-300 bg-rose-50/30" : "border-slate-200/80"
+          massBalance?.is_alarm ?? false ? "border-rose-300 bg-rose-50/30" : "border-slate-200/80"
         }`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
               <Scale className="w-4 h-4 text-blue-600" />
               <h3 className="text-sm font-bold text-slate-900">Mass Balance (3-Sigma)</h3>
             </div>
-            {(Boolean(massBalance?.is_alarm)) ? (
+            {(massBalance?.is_alarm ?? false) ? (
               <span className="text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-full font-bold">ALARM</span>
             ) : (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">OK</span>
@@ -151,14 +105,14 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
 
         {/* 2. Current Signature */}
         <div className={`bg-white border rounded-2xl p-5 shadow-xs transition ${
-          Boolean(currentSig?.is_alarm) ? "border-purple-300 bg-purple-50/30" : "border-slate-200/80"
+          currentSig?.is_alarm ?? false ? "border-purple-300 bg-purple-50/30" : "border-slate-200/80"
         }`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
               <Zap className="w-4 h-4 text-purple-600" />
               <h3 className="text-sm font-bold text-slate-900">Current Signature</h3>
             </div>
-            {(Boolean(currentSig?.is_alarm)) ? (
+            {(currentSig?.is_alarm ?? false) ? (
               <span className="text-[10px] bg-purple-600 text-white px-2 py-0.5 rounded-full font-bold">ALARM</span>
             ) : (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">OK</span>
@@ -202,25 +156,25 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
             </div>
             <div className="flex justify-between text-slate-500">
               <span>Night Residual:</span>
-              <span className="font-mono text-slate-700 font-semibold">{mnf?.residual ?? 0.12} L/min</span>
+              <span className="font-mono text-slate-700 font-semibold">{mnf?.residual ?? 0} L/min</span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
-              <span className="font-extrabold text-amber-600">{((mnf?.confidence ?? 0.700) * 100).toFixed(1)}%</span>
+              <span className="font-extrabold text-amber-600">{((mnf?.confidence ?? 0) * 100).toFixed(1)}%</span>
             </div>
           </div>
         </div>
 
         {/* 4. CUSUM */}
         <div className={`bg-white border rounded-2xl p-5 shadow-xs transition ${
-          Boolean(cusum?.is_alarm) ? "border-emerald-300 bg-emerald-50/30" : "border-slate-200/80"
+          cusum?.is_alarm ?? false ? "border-emerald-300 bg-emerald-50/30" : "border-slate-200/80"
         }`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
               <Activity className="w-4 h-4 text-emerald-600" />
               <h3 className="text-sm font-bold text-slate-900">CUSUM Micro-Leak</h3>
             </div>
-            {Boolean(cusum?.is_alarm) ? (
+            {(cusum?.is_alarm ?? false) ? (
               <span className="text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">SUSPECT</span>
             ) : (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">OK</span>
@@ -229,11 +183,11 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           <div className="space-y-2 text-xs">
             <div className="flex justify-between text-slate-500">
               <span>Accumulated Score:</span>
-              <span className="font-mono text-slate-900 font-bold">{cusum?.score ?? 0}</span>
+              <span className="font-mono text-slate-900 font-bold">{cusum?.cusum_score ?? 0}</span>
             </div>
             <div className="flex justify-between text-slate-500">
               <span>Decision Threshold h:</span>
-              <span className="font-mono text-slate-700 font-semibold">3.00</span>
+              <span className="font-mono text-slate-700 font-semibold">{cusum?.threshold_h ?? 0}</span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
@@ -242,138 +196,121 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           </div>
         </div>
 
-        {/* 5. Pressure Drop — only present when the rig has a real transducer */}
+        {/* 5. Acoustic (MPU6050 + piezo) */}
         <div className={`bg-white border rounded-2xl p-5 shadow-xs transition ${
-          Boolean(pressureDrop?.is_alarm) ? "border-rose-300 bg-rose-50/30" : "border-slate-200/80"
+          acoustic?.is_alarm ? "border-indigo-300 bg-indigo-50/30" : "border-slate-200/80"
         }`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
-              <Gauge className="w-4 h-4 text-rose-600" />
-              <h3 className="text-sm font-bold text-slate-900">Pressure Drop</h3>
+              <Waves className="w-4 h-4 text-indigo-600" />
+              <h3 className="text-sm font-bold text-slate-900">Acoustic (Vibration)</h3>
             </div>
-            {!pressureDrop?.active ? (
-              <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">INACTIVE</span>
-            ) : Boolean(pressureDrop?.is_alarm) ? (
-              <span className="text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-full font-bold">ALARM</span>
+            {!acoustic?.available ? (
+              <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">NO SENSOR DATA</span>
+            ) : acoustic?.is_alarm ? (
+              <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full font-bold">ALARM</span>
             ) : (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">OK</span>
             )}
           </div>
-          <div className="space-y-2 text-xs">
-            <div className="flex justify-between text-slate-500">
-              <span>Line Pressure:</span>
-              <span className="font-mono text-slate-900 font-bold">
-                {pressureDrop?.pressure_bar != null ? `${pressureDrop.pressure_bar} bar` : "—"}
-              </span>
+          {acoustic?.available ? (
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between text-slate-500">
+                <span>Band-mid vs baseline:</span>
+                <span className="font-mono text-slate-900 font-bold">{acoustic?.ratio_to_baseline ?? 0}×</span>
+              </div>
+              <div className="flex justify-between text-slate-500">
+                <span>Piezo centroid:</span>
+                <span className="font-mono text-slate-700 font-semibold">{acoustic?.piezo_centroid_hz ?? "—"} Hz</span>
+              </div>
+              <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Channel Confidence:</span>
+                <span className="font-extrabold text-indigo-600">{((acoustic?.confidence ?? 0) * 100).toFixed(1)}%</span>
+              </div>
             </div>
-            <div className="flex justify-between text-slate-500">
-              <span>Baseline / Drop:</span>
-              <span className="font-mono text-slate-700 font-semibold">
-                {pressureDrop?.baseline_bar != null ? `${pressureDrop.baseline_bar} / ${pressureDrop.drop_bar}` : "—"}
-              </span>
-            </div>
-            <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
-              <span className="text-slate-500 font-medium">Channel Confidence:</span>
-              <span className="font-extrabold text-rose-600">
-                {((pressureDrop?.confidence ?? 0) * 100).toFixed(1)}%
-              </span>
-            </div>
-            {!pressureDrop?.active && (
-              <p className="text-[10px] text-slate-400 leading-snug pt-1">
-                No measured pressure — inactive so it cannot double-count the flow signal.
-              </p>
-            )}
-          </div>
+          ) : (
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Awaiting MPU6050/piezo telemetry — this channel is inert until the acoustic sensors are wired and publishing.
+            </p>
+          )}
         </div>
       </div>
 
-      {/* Fusion weights — fetched from /api/detectors/config so the formula
-          shown is the one the engine is actually running. It previously
-          hardcoded 0.20 for Current and MNF, which did not match the code. */}
+      {/* Fusion Engine Card */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs">
         <h3 className="text-sm font-bold text-slate-900 mb-2 flex items-center space-x-2">
           <Cpu className="w-4 h-4 text-blue-600" />
           <span>Multi-Sensor Confidence Fusion Algorithm Weights</span>
         </h3>
-        <p className="text-xs text-slate-500 mb-5 font-mono">
-          {config
-            ? `Confidence = ${config.formula}`
-            : "Loading fusion configuration…"}
+        <p className="text-xs text-slate-500 mb-2 font-mono">
+          Confidence = 0.32×C_MassBalance + 0.20×C_Current + 0.16×C_CUSUM + 0.12×C_MNF + 0.20×C_Acoustic
+        </p>
+        <p className="text-[11px] text-slate-400 mb-5">
+          Plus a +15% bonus when Acoustic agrees with any flow/current-based channel — agreement between
+          physically independent sensors is stronger evidence than any single channel's magnitude alone.
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-xs">
-          {WEIGHT_ROWS.map(({ key, label, tone }) => (
-            <div key={key} className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
-              <div className="text-slate-500 font-medium">{label}</div>
-              <div className={`text-xl font-extrabold mt-1 ${tone}`}>
-                {config?.weights?.[key] != null
-                  ? `${(config.weights[key] * 100).toFixed(0)}%`
-                  : "—"}
-              </div>
-            </div>
-          ))}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs">
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
+            <div className="text-slate-500 font-medium">Mass Balance</div>
+            <div className="text-xl font-extrabold text-blue-600 mt-1">32%</div>
+          </div>
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
+            <div className="text-slate-500 font-medium">Motor Current</div>
+            <div className="text-xl font-extrabold text-purple-600 mt-1">20%</div>
+          </div>
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
+            <div className="text-slate-500 font-medium">CUSUM Drift</div>
+            <div className="text-xl font-extrabold text-emerald-600 mt-1">16%</div>
+          </div>
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
+            <div className="text-slate-500 font-medium">MNF Baseline</div>
+            <div className="text-xl font-extrabold text-amber-600 mt-1">12%</div>
+          </div>
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70">
+            <div className="text-slate-500 font-medium">Acoustic</div>
+            <div className="text-xl font-extrabold text-indigo-600 mt-1">20%</div>
+          </div>
         </div>
+      </div>
 
-        {config?.thresholds && (
-          <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-2 md:grid-cols-3 gap-3 text-[11px]">
-            {Object.entries(config.thresholds).map(([k, v]) => (
-              <div key={k} className="flex justify-between">
-                <span className="text-slate-400 font-medium">{THRESHOLD_LABELS[k] ?? k}</span>
-                <span className="font-mono font-bold text-slate-700">{String(v)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* The guard can veto a fused alarm, so publishing the weights alone
-            would overstate what decides an alarm. */}
-        {config?.plausibility_guard && (
-          <div className="mt-5 pt-5 border-t border-slate-100">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-900 flex items-center space-x-2">
-                <Scale className="w-4 h-4 text-indigo-600" />
-                <span>Physical Plausibility Guard</span>
-              </span>
-              <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                  config.plausibility_guard.enabled
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "bg-slate-100 text-slate-500"
-                }`}
-              >
-                {config.plausibility_guard.enabled ? "ACTIVE" : "DISABLED"}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              {config.plausibility_guard.rule}
+      {/* Vibration Spectrum Panel (hardware spec v2 task 9) */}
+      <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs">
+        <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center space-x-2">
+          <Waves className="w-4 h-4 text-indigo-600" />
+          <span>Vibration Spectrum vs Baseline</span>
+        </h3>
+        {vibration ? (
+          <div className="space-y-3">
+            {([
+              { label: "Low band (10-50 Hz)", value: vibration.band_low, color: "bg-slate-400" },
+              { label: "Mid band (50-150 Hz) — leak jet", value: vibration.band_mid, color: "bg-indigo-600" },
+              { label: "High band (150-250 Hz)", value: vibration.band_high, color: "bg-slate-400" },
+            ]).map((band) => {
+              const baseline = acoustic?.baseline_band_mid ?? 0.015;
+              const maxScale = Math.max(baseline * 4, band.value ?? 0, 0.001);
+              const widthPct = Math.min(100, ((band.value ?? 0) / maxScale) * 100);
+              return (
+                <div key={band.label}>
+                  <div className="flex justify-between text-xs text-slate-500 mb-1">
+                    <span>{band.label}</span>
+                    <span className="font-mono font-bold text-slate-800">{band.value?.toFixed(4) ?? "—"}</span>
+                  </div>
+                  <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                    <div className={`h-full ${band.color} rounded-full`} style={{ width: `${widthPct}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+            <p className="text-[11px] text-slate-400 pt-1">
+              Baseline band_mid: {(acoustic?.baseline_band_mid ?? 0.015).toFixed(4)} · ratio to baseline: {acoustic?.ratio_to_baseline ?? "—"}×
+              · absolute values are meaningless on their own, only the ratio to this rig's own clean-running baseline matters.
             </p>
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-[11px]">
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Current per L/min</span>
-                <span className="font-mono font-bold text-slate-700">
-                  {config.plausibility_guard.current_ma_per_leak_lpm} mA
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Pressure per L/min</span>
-                <span className="font-mono font-bold text-slate-700">
-                  {config.plausibility_guard.pressure_bar_per_leak_lpm} bar
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Veto margin</span>
-                <span className="font-mono font-bold text-slate-700">
-                  {config.plausibility_guard.margin}×
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Never veto below</span>
-                <span className="font-mono font-bold text-slate-700">
-                  {config.plausibility_guard.min_residual_lpm} L/min
-                </span>
-              </div>
-            </div>
           </div>
+        ) : (
+          <p className="text-xs text-slate-400">
+            Awaiting telemetry — no vibration spectrum available for the current sample.
+          </p>
         )}
       </div>
     </div>

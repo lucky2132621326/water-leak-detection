@@ -1,25 +1,91 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 
-const FASTAPI_BASE_URL = process.env.FASTAPI_BASE_URL || "http://localhost:8000";
+const FASTAPI_BASE_URL = process.env.FASTAPI_BASE_URL || "http://localhost:8001";
+// Server-side only — never sent to the browser. FastAPI rejects mutating
+// requests without this matching its own API_KEY env var. Must be set to
+// the same value in both processes' environments (see .env.example).
+const FASTAPI_API_KEY = process.env.API_KEY || "local-dev-key-change-me";
+const DASHBOARD_AUDIENCE = process.env.DASHBOARD_AUDIENCE === "judge" ? "judge" : "operator";
+const IS_JUDGE_VIEW = DASHBOARD_AUDIENCE === "judge";
+const WORKSPACE_ROOT = path.resolve(process.cwd());
+const SENSITIVE_FILENAMES = new Set([".env", "secrets.h"]);
+
+function resolveInsideWorkspace(relativePath: string) {
+  const resolved = path.resolve(WORKSPACE_ROOT, relativePath);
+  const relative = path.relative(WORKSPACE_ROOT, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  if (SENSITIVE_FILENAMES.has(path.basename(resolved)) || path.basename(resolved).startsWith(".env")) return null;
+  return resolved;
+}
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+  const HOST = process.env.HOST || "0.0.0.0";
 
-  app.use(express.json());
+  app.disable("x-powered-by");
+  app.use(express.json({ limit: "32kb" }));
+  app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Frame-Options", "DENY");
+    if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
+
+    if (IS_JUDGE_VIEW) {
+      res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+      if (process.env.NODE_ENV === "production") {
+        res.setHeader(
+          "Content-Security-Policy",
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+        );
+      }
+
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+        res.status(403).json({
+          status: "error",
+          code: "PUBLIC_DEMO_READ_ONLY",
+          message: "The judge-facing dashboard is read-only. Use the local operator dashboard for changes.",
+        });
+        return;
+      }
+
+      const internalPath = req.path.startsWith("/api/files") || req.path.startsWith("/api/docs");
+      if (internalPath) {
+        res.status(404).json({ status: "error", code: "PUBLIC_DEMO_ROUTE_HIDDEN", message: "This route is not available in the judge view." });
+        return;
+      }
+    }
+    next();
+  });
+
+  app.get("/api/runtime-capabilities", (_req, res) => {
+    res.json({
+      audience: DASHBOARD_AUDIENCE,
+      read_only: IS_JUDGE_VIEW,
+      mutations_allowed: !IS_JUDGE_VIEW,
+    });
+  });
+
+  app.get("/robots.txt", (_req, res) => {
+    res.type("text/plain").send("User-agent: *\nDisallow: /\n");
+  });
 
   // Thin proxy to the Python FastAPI service (backend/api_server.py), which
-  // owns real detection state for whichever operating mode is active (Mock Data
-  // or Live Sensor — same pipeline either way). Node neither generates nor
-  // evaluates telemetry itself.
+  // owns real detection state (live MQTT-fed or replay-fed — same pipeline
+  // either way). Node no longer generates or evaluates telemetry itself.
   async function proxyToFastApi(req: express.Request, res: express.Response, fastApiPath: string) {
     try {
       const query = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
       const url = `${FASTAPI_BASE_URL}${fastApiPath}${query}`;
-      const init: RequestInit = { method: req.method, headers: { "Content-Type": "application/json" } };
+      const init: RequestInit = {
+        method: req.method,
+        headers: { "Content-Type": "application/json", "X-API-Key": FASTAPI_API_KEY },
+        signal: AbortSignal.timeout(4000),
+      };
       if (req.method !== "GET" && req.method !== "HEAD") {
         init.body = JSON.stringify(req.body ?? {});
       }
@@ -37,7 +103,11 @@ async function startServer() {
       const data = await upstream.json();
       res.status(upstream.status).json(data);
     } catch (e) {
-      res.status(502).json({ status: "error", result: `Detection backend unreachable: ${String(e)}` });
+      res.status(502).json({
+        status: "error",
+        code: "DETECTION_BACKEND_UNAVAILABLE",
+        message: "The detection service did not respond within four seconds.",
+      });
     }
   }
 
@@ -47,11 +117,15 @@ async function startServer() {
     { method: "get", path: "/api/health" },
     { method: "get", path: "/api/mode" },
     { method: "post", path: "/api/mode" },
+    { method: "get", path: "/api/calibration" },
+    { method: "post", path: "/api/calibration" },
+    { method: "get", path: "/api/ground-truth/status" },
+    { method: "post", path: "/api/ground-truth/start" },
+    { method: "post", path: "/api/ground-truth/stop" },
     { method: "get", path: "/api/telemetry" },
     { method: "get", path: "/api/telemetry/history" },
-    { method: "post", path: "/api/leak/toggle" },
-    { method: "get", path: "/api/benchmark/runs" },
-    { method: "post", path: "/api/benchmark/evaluate" },
+    { method: "get", path: "/api/replay/runs" },
+    { method: "post", path: "/api/replay/evaluate" },
     { method: "get", path: "/api/localization/current" },
     { method: "get", path: "/api/work-orders" },
     { method: "post", path: "/api/work-orders/dispatch" },
@@ -61,23 +135,6 @@ async function startServer() {
     { method: "get", path: "/api/alerts" },
     { method: "get", path: "/api/alerts/summary" },
     { method: "get", path: "/api/savings" },
-    { method: "get", path: "/api/status" },
-    { method: "get", path: "/api/analytics/summary" },
-    { method: "get", path: "/api/analytics/roc" },
-    { method: "get", path: "/api/detectors/config" },
-    { method: "get", path: "/api/scenarios" },
-    { method: "post", path: "/api/scenarios/run" },
-    { method: "get", path: "/api/mock/control" },
-    { method: "post", path: "/api/mock/control/release" },
-    { method: "get", path: "/api/calibration" },
-    { method: "post", path: "/api/calibration" },
-    { method: "get", path: "/api/config" },
-    { method: "post", path: "/api/self-test" },
-    { method: "get", path: "/api/experiments/status" },
-    { method: "post", path: "/api/experiments/start" },
-    { method: "post", path: "/api/experiments/stop" },
-    { method: "post", path: "/api/experiments/ground-truth/start" },
-    { method: "post", path: "/api/experiments/ground-truth/stop" },
   ];
 
   for (const route of PROXIED_ROUTES) {
@@ -96,6 +153,26 @@ async function startServer() {
     app[route.method](route.path, (req, res) => proxyToFastApi(req, res, route.upstream(req.params)));
   }
 
+  // WNTR simulation stays served from Node for now — it's a decorative
+  // placeholder (docs/EXPERIMENT_PROTOCOL.md), not part of the real detection
+  // pipeline, so it doesn't need the FastAPI round-trip.
+  app.get("/api/simulation/wntr", (req, res) => {
+    const hours = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, "0")}:00`);
+    const normalPressure = hours.map((_, h) => Number((32.0 + 3.0 * Math.sin((h * Math.PI) / 12)).toFixed(2)));
+    const leakPressure = normalPressure.map((p, h) => Number((h >= 10 && h <= 18 ? p - 4.5 : p).toFixed(2)));
+
+    res.json({
+      network: "Net3_Rig_Subsystem_24hr",
+      is_simulated: true,
+      note: "Decorative placeholder — hardcoded sine-wave curve, not a real WNTR/EPANET hydraulic solve. Not wired into the dashboard nav.",
+      hours,
+      normal_pressure_m: normalPressure,
+      leak_pressure_m: leakPressure,
+      emitter_flow_lpm: 1.45,
+      head_loss_meters: 4.5
+    });
+  });
+
   // Documentation APIs
   app.get("/api/docs", (req, res) => {
     const docsDir = path.join(process.cwd(), "docs");
@@ -108,10 +185,10 @@ async function startServer() {
   });
 
   app.get("/api/docs/:filename", (req, res) => {
-    const filename = req.params.filename;
-    const filePath = path.join(process.cwd(), "docs", filename);
+    const filename = path.basename(req.params.filename);
+    const filePath = filename.endsWith(".md") ? resolveInsideWorkspace(path.join("docs", filename)) : null;
     try {
-      if (fs.existsSync(filePath)) {
+      if (filePath && fs.existsSync(filePath)) {
         const content = fs.readFileSync(filePath, "utf-8");
         res.json({ filename, content });
       } else {
@@ -123,10 +200,11 @@ async function startServer() {
   });
 
   app.post("/api/docs/:filename", (req, res) => {
-    const filename = req.params.filename;
+    const filename = path.basename(req.params.filename);
     const { content } = req.body;
-    const filePath = path.join(process.cwd(), "docs", filename);
+    const filePath = filename.endsWith(".md") ? resolveInsideWorkspace(path.join("docs", filename)) : null;
     try {
+      if (!filePath || typeof content !== "string") return res.status(400).json({ error: "Valid Markdown filename and content required" });
       fs.writeFileSync(filePath, content, "utf-8");
       res.json({ success: true, filename });
     } catch (e) {
@@ -141,6 +219,7 @@ async function startServer() {
       const items: any[] = [];
       for (const entry of entries) {
         if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue;
+        if (SENSITIVE_FILENAMES.has(entry.name) || entry.name.startsWith(".env")) continue;
         const relPath = path.join(baseRelative, entry.name);
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
@@ -172,9 +251,9 @@ async function startServer() {
   app.get("/api/files/content", (req, res) => {
     const relativePath = req.query.path as string;
     if (!relativePath) return res.status(400).json({ error: "Path required" });
-    const fullPath = path.join(process.cwd(), relativePath);
+    const fullPath = resolveInsideWorkspace(relativePath);
     try {
-      if (fs.existsSync(fullPath)) {
+      if (fullPath && fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
         const content = fs.readFileSync(fullPath, "utf-8");
         res.json({ path: relativePath, content });
       } else {
@@ -200,8 +279,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Water Leak Detection Platform] Server running at http://0.0.0.0:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`[Water Leak Detection Platform] ${DASHBOARD_AUDIENCE} server running at http://${HOST}:${PORT}`);
   });
 }
 

@@ -16,18 +16,27 @@
 
 ## Hardware Status
 
-| Component | Status | Interface / Pin | Notes |
-|---|---|---|---|
-| **ESP32 DevKit V1** | ONLINE | WiFi / MQTT | Fixed IP 192.168.1.104 |
-| **YF-S201 Flow Sensor #1 ($Q_{\text{in}}$)** | WORKING | GPIO 18 | Inlet main pulse meter |
-| **YF-S201 Flow Sensor #2 ($Q_{\text{out}}$)** | WORKING | GPIO 19 | Outlet return pulse meter |
-| **YF-S201 Flow Sensor #3 ($Q_{\text{branch}}$)** | WORKING | GPIO 21 | Branch A side pulse meter |
-| **INA219 Power/Current Sensor** | WORKING | I2C (SDA 21 / SCL 22) | Motor current load monitoring |
-| **12V DC Pump #1** | WORKING | Relay GPIO 26 | Primary circulation pump |
-| **12V DC Pump #2** | WORKING | Relay GPIO 27 | Auxiliary pump / variable load |
-| **Servo Motor Isolation Valve** | WORKING | PWM GPIO 13 | Branch A active isolation (0° / 45° / 90°) |
+> The table below used to claim ONLINE/WORKING status and a fixed IP that
+> were never actually verified against physical hardware, and pins that
+> don't match `firmware/src/config.h`. Corrected to the real pin map
+> (`docs/HARDWARE_INTEGRATION_SPEC.md` v2) and an honest status: nothing
+> here has been bench-verified in this repo yet.
 
-**Last Verified Hardware Test**: 2026-08-03 10:00:00 UTC
+| Component | Status | GPIO / Interface | Notes |
+|---|---|---|---|
+| **ESP32 DevKit V1** | NOT YET WIRED | WiFi / MQTT | No physical bring-up performed yet |
+| **YF-S201 Flow Sensor #1 ($Q_{\text{in}}$)** | NOT YET WIRED | GPIO 34, interrupt RISING | `firmware/serial_test/serial_test.ino` is the first verification step |
+| **YF-S201 Flow Sensor #2 ($Q_{\text{out}}$)** | NOT YET WIRED | GPIO 35, interrupt RISING | |
+| **YF-S201 Flow Sensor #3 ($Q_{\text{branch}}$)** | NOT YET WIRED | GPIO 32, interrupt RISING | |
+| **INA219 Power/Current Sensor** | NOT YET WIRED | I2C SDA 21 / SCL 22 @ 0x40 | Motor current load monitoring |
+| **MPU6050 Accelerometer** | NOT YET WIRED | I2C SDA 21 / SCL 22 @ 0x68 | v2 addition — acoustic channel |
+| **Piezo Disc** | NOT YET WIRED | GPIO 33, ADC1 | v2 addition — secondary acoustic channel |
+| **DS18B20 Temperature Probe** | NOT YET WIRED | GPIO 4, 1-Wire (needs 4.7k pull-up) | v2 addition — K-factor temp compensation |
+| **12V DC Pump #1 (P1, supply)** | NOT YET WIRED | Relay GPIO 25, active-LOW | |
+| **12V DC Pump #2 (P2, demand)** | NOT YET WIRED | Relay GPIO 26, active-LOW | |
+| **Servo MG996R Isolation Valve** | NOT YET WIRED | PWM GPIO 27, 50Hz LEDC | Branch A isolation; separate 5.6V rail |
+
+No status LED in this revision — not wanted (see hardware spec section 3).
 
 ---
 
@@ -41,80 +50,70 @@
 
 ---
 
-## Team Roles & Members
-- **Member A**: Firmware & Sensor Rig Lead (ESP32, Flow Sensors, INA219, Relays)
-- **Member B**: Backend & MQTT Architect (Python Collector, MongoDB Repository, Telemetry Parser)
-- **Member C**: Detection Algorithms Lead (Mass Balance, Current Signature, MNF, CUSUM, Fusion)
-- **Member D**: Replay Engine & Analytics (Historical Replay, ROC/F1 Evaluation Metrics)
-- **Member E**: Dashboard & Optimization Lead (Streamlit / React Workbench, Branch Localization, CP-SAT Scheduler)
-
 ---
 
 ## System Architecture Summary
 ```text
 ESP32 (Telemetry Rig)
-  ↓ [MQTT / Telemetry Topics]
+  ↓ [MQTT / rig/telemetry, rig/status, rig/cmd]
 Mosquitto Broker
   ↓
-Python Backend / Express Server
-  ├── Telemetry Collector & Validator
-  ├── MongoDB Storage Engine (data/water_leak_detection)
-  ├── Detectors (Mass Balance, Current, MNF, CUSUM, Fusion)
-  ├── Localization & Isolation
-  ├── Replay Engine
-  └── CP-SAT Work Order Scheduler
+backend/mqtt/subscriber.py (live) ── backend/replay/replay_runner.py (replay)
+  ↓                                          ↓
+        backend/pipeline.py — DetectionPipeline (shared by both)
+  ├── Detectors: Mass Balance, Current Signature, MNF, CUSUM, Acoustic
+  ├── Fusion Engine (weighted + independent-agreement bonus)
+  ├── Localization Service (isolation-test evidence, not actuator-state shortcut)
+  └── Response Builder (likelihood, evidence, work-order summary)
   ↓
-MongoDB Database (mongodb://localhost:27017/water_leak_detection)
+MongoDB (water_leak_detection) + independent JSONL live-data log
   ↓
-Interactive Dashboard Workbench
+backend/api_server.py (FastAPI) → server.ts (thin proxy) → React dashboard
 ```
 
 ---
 
-## Completed Features
-- [x] **MQTT Spec & Collector**: JSON Telemetry schema (`rig/telemetry`), input/output flow ($Q_{in}$, $Q_{out}$, $Q_{branch}$), pump power consumption ($I_{mA}$, $V$).
-- [x] **MongoDB Collections & Repository**: Collections `telemetry`, `leak_events`, `detections`, `experiment_runs`, `work_orders`.
-- [x] **Core Mass Balance Detector**: $3\sigma$ thresholding on differential flow residual ($Q_{in} - Q_{out} - Q_{branch}$).
-- [x] **Current Signature Analysis**: Motor load current spike/drop detection on valve actuation.
-- [x] **Minimum Night Flow (MNF) Detector**: Low-baseline leak residual tracking during quiet operational windows.
-- [x] **CUSUM Detector**: Cumulative sum drift tracker for subtle micro-leaks.
-- [x] **Multi-Sensor Confidence Fusion**: Weighted Bayesian / confidence score combining all 4 detection channels.
-- [x] **Replay Engine**: Replay historical benchmark datasets (`RUN_001` - `RUN_012`) with speed adjustments and ROC/F1 evaluation calculation.
-- [x] **Branch Localization**: Branch topology isolation determining leak proximity and branch node (Branch A / Branch B / Main).
-- [x] **CP-SAT Work Order Scheduler**: Constraint-based crew dispatch matching leak severity with crew skills and travel times.
-- [x] **WNTR / EPANET Simulation**: Hydraulic model runner & benchmark comparisons.
+## Completed Features (software — none bench-verified against real hardware yet)
+- [x] **Detection pipeline (5 channels)**: Mass Balance (3σ), Current Signature, MNF, CUSUM, Acoustic (MPU6050+piezo, v2) — `backend/pipeline.py`, `backend/detectors/`.
+- [x] **Weighted fusion + independent-agreement bonus**: `backend/fusion/fusion_engine.py`.
+- [x] **Branch localization via real isolation-test evidence** (not just servo-state shortcut): `backend/localization/localization_service.py` + `branch_analyzer.py`.
+- [x] **MongoDB persistence**: `telemetry`, `detections`, `leak_events`, `experiment_runs`, `work_orders`, `events` collections — `backend/repositories/`.
+- [x] **Replay engine**: one real seeded run (`RUN_001`, not RUN_001-012 — see `backend/replay/seed_runs.py`) scored with real precision/recall/F1/latency, not hardcoded.
+- [x] **Ground-truth leak logging**: `/api/ground-truth/start|stop|status`, replacing software leak injection.
+- [x] **Work order dispatch**: `backend/scheduler/work_order_scheduler.py` — plain round-robin by crew index, NOT a CP-SAT/OR-Tools constraint solve (renamed from the misleading `cp_sat_scheduler.py`).
+- [x] **Impact analysis, Alert Center, experiment reports**: `backend/impact/`, `backend/alerts/`, `backend/reports/`.
+
+## Explicitly decorative / not real (do not present as working)
+- `simulation/wntr_model.py` and `/api/simulation/wntr` — hardcoded sine-wave curve, not a WNTR/EPANET hydraulic solve. Not wired into the dashboard nav.
+- `src/components/AnalyticsView.tsx` — 100% hardcoded fake ROC/precision numbers, no fetch calls. Intentionally hidden from the sidebar.
+- `src/components/SettingsView.tsx` — Save/Self-Test buttons are local-state theater, no backend calls. Intentionally hidden from the sidebar.
 
 ---
 
 ## Pending Features / Next Tasks
-- [ ] Calibrate Flow Sensor 2 K-factor pulse drift under high pressure (>3 bar).
-- [ ] Add live hardware serial pass-through connector for direct USB-ESP32 debugging.
-- [ ] Execute Run 13-20 high-rate pulse noise stress test.
+- [ ] Firmware `main.cpp`: MPU6050 burst+FFT sampling, piezo ADC, DS18B20 1-Wire read (hardware spec v2 task 2) — not started.
+- [ ] Physical bring-up: `firmware/serial_test/serial_test.ino` is the first milestone, not yet run against real hardware.
+- [ ] Validation scenario matrix beyond the single seeded `RUN_001` (multiple leak sizes/zones/onset times, no-leak controls).
+- [ ] Authentication/authorization on mutating endpoints (mode switch, work-order dispatch, alert disposition).
 
 ---
 
-## Database Schema Overview
-- `telemetry`: `_id`, `ts`, `seq`, `q_in_lpm`, `q_out_lpm`, `q_branch_lpm`, `current_ma`, `voltage_v`, `pressure_bar`, `raw_pulses_in`, `raw_pulses_out`
-- `leak_events`: `_id`, `start_ts`, `stop_ts`, `location_node`, `severity_lpm`, `is_ground_truth`, `notes`
-- `detections`: `_id`, `ts`, `method`, `confidence`, `residual`, `is_alarm`, `leak_event_id`
-- `experiment_runs`: `_id`, `operator`, `date`, `leak_size_lpm`, `pump_mode`, `notes`
-- `work_orders`: `_id`, `leak_event_id`, `crew_name`, `priority`, `scheduled_start`, `status`, `estimated_hrs`
+## Database Schema Overview (MongoDB — not SQLite; see Decision #001)
+- `telemetry`: `_id`, `ts`, `seq`, `device_id`, `run_id`, `flow{q_in_lpm,q_out_lpm,q_branch_lpm,pulses_in,pulses_out,pulses_branch}`, `power{voltage,current_ma}`, `actuators{pump1,pump2,servo_deg}`, `health{...}`, `vibration{rms,band_low,band_mid,band_high,piezo_rms,piezo_centroid_hz}` (v2, nullable), `temp{water_c}` (v2, nullable), `pressure_bar`, `pressure_source`
+- `leak_events`: `_id`, `start_ts`, `stop_ts`, `location_node`, `severity_lpm`, `run_id`, `is_ground_truth`, `notes`, `metadata`
+- `detections`: full `response_builder.py` output per sample (`likelihood_score`, `zone`, `evidence`, `detectors`, `fusion`, etc.), `run_id`
+- `experiment_runs`: `run_id`, `operator`, `date`, `leak_size_lpm`, `location`, `duration_sec`, `pump_mode`, `notes`
+- `work_orders`: `id`, `leak_id`, `location_node`, `severity_lpm`, `priority`, `assigned_crew`, `estimated_repair_hrs`, `scheduled_start`, `status`
 
 ---
 
-## MQTT Topics Specification
-- `rig/telemetry` -> Published by ESP32 every 1000ms.
-- `rig/cmd` -> Commands sent to ESP32 (e.g. valve open/close, pump PWM speed).
-- `rig/status` -> System health, WiFi RSSI, sensor status flags.
-
----
-
-## Known Bugs & Fixes
-- **Flow Sensor Pulse Drift**: Resolved by adding hardware debouncing capacitor (100nF) and 10ms software dead-time in ISR.
-- **Servo Re-boot**: Addressed by isolating servo power line to dedicated 5V 2A regulator with common ground.
+## MQTT Topics Specification (see `docs/MQTT_SPEC.md` for the full schema)
+- `rig/telemetry` -> published by ESP32 at 1 Hz, nested schema per hardware spec v2 section 5.4.
+- `rig/cmd` -> `{pump1, pump2, servo_deg}`; firmware rejects partial commands.
+- `rig/status` -> retained, with MQTT Last Will for offline detection.
 
 ---
 
 ## Recent Decisions
-- **Decision #001**: MongoDB selected over SQLite/Relational for schema flexibility, document-oriented time-series indexing, and scalable JSON telemetry storage.
-- **Decision #002**: Flat backend structure (`collector`, `detectors`, `replay`, `scheduler`) chosen for 30-second error isolation.
+- **Decision #001**: MongoDB selected over SQLite/Relational for schema flexibility, document-oriented time-series indexing, and scalable JSON telemetry storage. Reaffirmed 2026-08-09 — an "improvised" hardware spec re-mentioned SQLite in its task list, but nothing in the codebase implements it; MongoDB remains the actual persistence layer throughout.
+- **Decision #002**: Flat backend structure (`detectors`, `fusion`, `localization`, `replay`, `scheduler`, `alerts`, `impact`, `reports`) chosen to keep the shared `DetectionPipeline` the single code path for both live and replay data.

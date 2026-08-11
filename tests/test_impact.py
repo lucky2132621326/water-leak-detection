@@ -49,6 +49,9 @@ class TestWaterLoss(unittest.TestCase):
 
 
 class TestCostEstimator(unittest.TestCase):
+    def test_default_currency_symbol_is_utf8(self):
+        self.assertEqual(CostEstimator().currency_symbol, "₹")
+
     def test_tariff_applied_per_kilolitre(self):
         est = CostEstimator(rate_per_kilolitre=25.0)
         self.assertAlmostEqual(est.cost_of(1000.0), 25.0, places=2)

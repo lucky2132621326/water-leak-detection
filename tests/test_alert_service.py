@@ -87,6 +87,17 @@ class TestIngestion(AlertServiceTestCase):
         self.svc.ingest(make_response(100, residual=-1.5))
         self.assertEqual(self.svc.query()[0]["peak_leak_rate_lpm"], 0.0)
 
+    def test_template_work_order_tracks_strongest_incident_evidence(self):
+        self.svc.ingest(make_response(100, zone="NONE", likelihood=16.0))
+        self.svc.ingest(make_response(101, zone="Main_Trunk", likelihood=66.0))
+        self.svc.ingest(make_response(102, zone="NONE", likelihood=20.0))
+
+        alert = self.svc.query()[0]
+        summary = alert["work_order_summary"]["summary"]
+        self.assertIn("Main_Trunk", summary)
+        self.assertIn("66.0%", summary)
+        self.assertNotIn("NONE", summary)
+
 
 class TestLifecycle(AlertServiceTestCase):
     def setUp(self):

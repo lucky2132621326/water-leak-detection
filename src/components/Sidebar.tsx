@@ -6,12 +6,10 @@ import {
   Droplets,
   MapPin,
   RotateCcw,
-  BarChart3,
   Sliders,
   ClipboardList,
   FileText,
   Bell,
-  Settings,
   Droplet,
   Calculator,
   History
@@ -24,7 +22,7 @@ export type NavTab =
   | "leak-detection"
   | "localization"
   | "impact-simulator"
-  | "scenarios"
+  | "replay"
   | "analytics"
   | "calibration"
   | "work-orders"
@@ -37,29 +35,38 @@ interface SidebarProps {
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
   unreadAlertsCount?: number;
+  readOnly?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   onSelectTab,
-  unreadAlertsCount = 3
+  unreadAlertsCount = 0,
+  readOnly = false,
 }) => {
-  const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
+  const allNavItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number; operatorOnly?: boolean }[] = [
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="w-5 h-5" /> },
     { id: "live-monitoring", label: "Live Monitoring", icon: <Radio className="w-5 h-5" /> },
-    { id: "experiment-control", label: "Experiment Control", icon: <FlaskConical className="w-5 h-5" /> },
+    { id: "experiment-control", label: "Experiment Control", icon: <FlaskConical className="w-5 h-5" />, operatorOnly: true },
     { id: "leak-detection", label: "Leak Detection", icon: <Droplets className="w-5 h-5" /> },
     { id: "localization", label: "Localization", icon: <MapPin className="w-5 h-5" /> },
-    { id: "impact-simulator", label: "Impact Simulator", icon: <Calculator className="w-5 h-5" /> },
-    { id: "scenarios", label: "Mock Scenarios", icon: <RotateCcw className="w-5 h-5" /> },
-    { id: "analytics", label: "Analytics", icon: <BarChart3 className="w-5 h-5" /> },
-    { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" /> },
-    { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" /> },
+    { id: "impact-simulator", label: "Impact Simulator", icon: <Calculator className="w-5 h-5" />, operatorOnly: true },
+    { id: "replay", label: "Replay & Benchmark", icon: <RotateCcw className="w-5 h-5" />, operatorOnly: true },
+    // "analytics" is intentionally not listed here — AnalyticsView is still
+    // 100% hardcoded fake numbers (no fetch calls at all). Route stays
+    // reachable via NavTab/App.tsx for when it's made real; don't add a
+    // sidebar button until then.
+    { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" />, operatorOnly: true },
+    { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" />, operatorOnly: true },
     { id: "reports", label: "Reports", icon: <FileText className="w-5 h-5" /> },
     { id: "alerts", label: "Alert Center", icon: <Bell className="w-5 h-5" />, badge: unreadAlertsCount },
     { id: "leak-history", label: "Leak History", icon: <History className="w-5 h-5" /> },
-    { id: "settings", label: "Settings", icon: <Settings className="w-5 h-5" /> }
+    // "settings" is intentionally not listed here — SettingsView's Save and
+    // Self-Test buttons are both local-state theater with no backend calls,
+    // even though real /api/calibration endpoints exist now (CalibrationView
+    // covers that ground for real). Route stays reachable, just no button.
   ];
+  const navItems = allNavItems.filter((item) => !readOnly || !item.operatorOnly);
 
   return (
     <aside className="w-64 bg-[#0B132B] text-slate-300 flex flex-col min-h-screen sticky top-0 z-30 border-r border-slate-800/80 shrink-0 select-none">
@@ -72,7 +79,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <h1 className="text-base font-bold text-white tracking-tight leading-tight">
             Smart Water System
           </h1>
-          <p className="text-[11px] text-blue-400 font-medium">Analytics & Hardware Rig</p>
+          <p className="text-[11px] text-blue-400 font-medium">Explainable Water Intelligence</p>
         </div>
       </div>
 
@@ -112,13 +119,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="mt-auto pt-4 pb-5 px-5 relative overflow-hidden">
         <div className="absolute inset-0 opacity-20 pointer-events-none">
           <svg className="w-full h-full text-blue-500" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <path d="0,70 Q30,50 60,75 T100,60 L100,100 L0,100 Z" fill="currentColor" />
-            <path d="0,80 Q40,65 70,85 T100,75 L100,100 L0,100 Z" fill="currentColor" opacity="0.6" />
+            <path d="M0,70 Q30,50 60,75 T100,60 L100,100 L0,100 Z" fill="currentColor" />
+            <path d="M0,80 Q40,65 70,85 T100,75 L100,100 L0,100 Z" fill="currentColor" opacity="0.6" />
           </svg>
         </div>
         <div className="relative z-10 text-[11px] text-slate-500 leading-relaxed">
-          <p>© 2025 Smart Water System</p>
-          <p className="text-slate-600">All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Smart Water System</p>
+          <p className="text-slate-600">Decision support · Verify in field</p>
         </div>
       </div>
     </aside>

@@ -3,18 +3,22 @@ import { Clock, Bell, ChevronDown } from "lucide-react";
 
 interface HeaderProps {
   systemOnline?: boolean;
+  systemLabel?: string;
   unreadCount?: number;
   onOpenAlerts?: () => void;
-  mode?: "live" | "mock";
+  mode?: "live" | "replay";
   onToggleMode?: () => void;
+  readOnly?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   systemOnline = true,
+  systemLabel,
   unreadCount = 3,
   onOpenAlerts,
-  mode = "mock",
-  onToggleMode
+  mode = "replay",
+  onToggleMode,
+  readOnly = false,
 }) => {
   const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
@@ -57,17 +61,17 @@ export const Header: React.FC<HeaderProps> = ({
             : "bg-rose-50 text-rose-700 border border-rose-200/80"
         }`}>
           <span className={`w-2 h-2 rounded-full ${systemOnline ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
-          <span>{systemOnline ? "System Online" : "System Offline"}</span>
+          <span>{systemLabel || (systemOnline ? "System Online" : "System Offline")}</span>
         </div>
       </div>
 
       {/* Right Header Controls: Live Clock, Notifications, Profile */}
       <div className="flex items-center space-x-6">
-        {/* Mock/Live data-source toggle — identical detection pipeline either way */}
-        {onToggleMode && (
+        {/* Live/Replay data-source toggle — same UI/detection pipeline either way */}
+        {onToggleMode && !readOnly && (
           <button
             onClick={onToggleMode}
-            title="Switch telemetry source: generated mock data or the live ESP32 rig"
+            title="Switch between live rig telemetry and replayed historical runs"
             className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition flex items-center space-x-2 ${
               mode === "live"
                 ? "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100"
@@ -75,15 +79,15 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <span className={`w-2 h-2 rounded-full ${mode === "live" ? "bg-rose-500 animate-pulse" : "bg-indigo-500"}`} />
-            <span>{mode === "live" ? "LIVE SENSORS" : "MOCK DATA"}</span>
+            <span>{mode === "live" ? "LIVE (Rig)" : "REPLAY"}</span>
           </button>
         )}
 
-        {/* Real-time Clock Display matching screenshot: "10:24:38 AM | May 24, 2025" */}
+        {/* Real-time local clock */}
         <div className="flex items-center space-x-2 text-slate-600 bg-slate-50 border border-slate-200/60 rounded-xl px-3.5 py-1.5 text-xs font-medium">
           <Clock className="w-4 h-4 text-slate-500" />
           <span>
-            {timeStr || "10:24:38 AM"} <span className="text-slate-400 mx-1">|</span> {dateStr || "May 24, 2025"}
+            {timeStr || "--:--:--"} <span className="text-slate-400 mx-1">|</span> {dateStr || "--- --, ----"}
           </span>
         </div>
 
@@ -101,13 +105,13 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </button>
 
-        {/* User Profile Avatar */}
+        {/* Runtime identity */}
         <div className="flex items-center space-x-2.5 cursor-pointer pl-2 border-l border-slate-200">
           <div className="w-9 h-9 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center shadow-xs">
-            AD
+            {readOnly ? "JV" : "AD"}
           </div>
-          <span className="text-sm font-semibold text-slate-800">Admin</span>
-          <ChevronDown className="w-4 h-4 text-slate-400" />
+          <span className="text-sm font-semibold text-slate-800">{readOnly ? "Judge View" : "Operator"}</span>
+          {!readOnly && <ChevronDown className="w-4 h-4 text-slate-400" />}
         </div>
       </div>
     </header>

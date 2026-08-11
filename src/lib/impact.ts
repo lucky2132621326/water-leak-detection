@@ -78,9 +78,11 @@ export function formatLitres(litres: number | null | undefined, opts: { compact?
 export function formatMoney(amount: number | null | undefined, symbol = "₹", opts: { compact?: boolean } = {}): string {
   const v = Number(amount ?? 0);
   if (!Number.isFinite(v)) return "—";
-  if (opts.compact && Math.abs(v) >= 100_000) return `${symbol}${(v / 100_000).toFixed(2)}L`;
-  if (opts.compact && Math.abs(v) >= 10_000) return `${symbol}${(v / 1000).toFixed(1)}k`;
-  return `${symbol}${v.toLocaleString(undefined, { minimumFractionDigits: v < 100 ? 2 : 0, maximumFractionDigits: v < 100 ? 2 : 0 })}`;
+  // Normalize records written before Windows config files were read explicitly as UTF-8.
+  const normalizedSymbol = symbol === "\u00e2\u201a\u00b9" ? "\u20b9" : symbol;
+  if (opts.compact && Math.abs(v) >= 100_000) return `${normalizedSymbol}${(v / 100_000).toFixed(2)}L`;
+  if (opts.compact && Math.abs(v) >= 10_000) return `${normalizedSymbol}${(v / 1000).toFixed(1)}k`;
+  return `${normalizedSymbol}${v.toLocaleString(undefined, { minimumFractionDigits: v < 100 ? 2 : 0, maximumFractionDigits: v < 100 ? 2 : 0 })}`;
 }
 
 export function formatRate(lpm: number | null | undefined): string {

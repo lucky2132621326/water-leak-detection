@@ -1,86 +1,105 @@
 #include "mqtt_client.h"
 #include "config.h"
-
-#include <WiFi.h>
-#include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <time.h>
 
-static WiFiClient wifiClient;
-static PubSubClient client(wifiClient);
-static CommandHandler commandHandler = nullptr;
+// Static instance pointer so the C-style PubSubClient callback can reach
+// the owning MQTTHandler (PubSubClient doesn't support member-function
+// callbacks or a user-data argument).
+static MQTTHandler* g_instance = nullptr;
 
-static void handleMessage(char* topic, byte* payload, unsigned int length) {
-    if (!commandHandler) return;
-
-    StaticJsonDocument<256> doc;
-    if (deserializeJson(doc, payload, length)) {
-        Serial.println("[MQTT] malformed command payload — ignored");
-        return;
-    }
-
-    // containsKey, not a defaulted read. A command that mentions only the servo
-    // must not be interpreted as "and also stop both pumps".
-    commandHandler(
-        doc.containsKey("pump1"), doc["pump1"] | false,
-        doc.containsKey("pump2"), doc["pump2"] | false,
-        doc.containsKey("servo_deg"), doc["servo_deg"] | 0);
+static void staticMessageCallback(char* topic, byte* payload, unsigned int length) {
+    if (g_instance) g_instance->handleMessage(topic, payload, length);
 }
 
-void MQTTHandler::begin(CommandHandler handler) {
-    commandHandler = handler;
-    onCommand = handler;
-    connectWiFi();
-    client.setServer(MQTT_HOST, MQTT_PORT);
-    client.setCallback(handleMessage);
-    // Telemetry with the vibration block runs past the 256-byte default.
-    client.setBufferSize(1024);
-    reconnect();
+MQTTHandler::MQTTHandler() : client(wifiClient), deviceId(DEVICE_ID), lastReconnectAttempt(0), onCommand(nullptr) {
+    g_instance = this;
 }
 
-void MQTTHandler::connectWiFi() {
+void MQTTHandler::connectWiFi(const char* ssid, const char* password) {
+    Serial.printf("[WiFi] Connecting to %s...\n", ssid);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    Serial.print("[WiFi] connecting");
+    WiFi.begin(ssid, password);
 
-    // Bounded. An unbounded wait would block the loop forever with the pumps in
-    // whatever state they were left — the relays are already OFF from setup(),
-    // and that must stay true even if the network never comes up.
-    for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) {
-        delay(500);
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - start) < 20000) {
+        delay(250);
         Serial.print(".");
     }
-    Serial.println();
 
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[WiFi] not connected — running offline, pumps stay off");
-        return;
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("\n[WiFi] Connected, IP: %s\n", WiFi.localIP().toString().c_str());
+        // Sync wall-clock time via NTP so telemetry "ts" is a real Unix timestamp.
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    } else {
+        Serial.println("\n[WiFi] FAILED to connect within timeout — will keep retrying in loop()");
     }
-    Serial.printf("[WiFi] connected, IP %s\n", WiFi.localIP().toString().c_str());
+}
 
-    // Sync wall-clock time so telemetry `ts` is a real Unix epoch. Until this
-    // completes, publishTelemetry sends ts=0 rather than uptime.
-    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+void MQTTHandler::connectMQTT(const char* broker, int port, const char* clientID) {
+    client.setServer(broker, port);
+    client.setCallback(staticMessageCallback);
+    client.setBufferSize(1024);
+    deviceId = clientID;
+    reconnect();
 }
 
 void MQTTHandler::reconnect() {
     if (WiFi.status() != WL_CONNECTED) return;
-    for (int attempt = 0; attempt < 3 && !client.connected(); attempt++) {
-        // Last Will: if this node drops off without saying goodbye, the broker
-        // publishes "offline" on the retained status topic. Without it the
-        // dashboard cannot distinguish a dead rig from an idle one.
-        if (client.connect(DEVICE_ID, nullptr, nullptr, TOPIC_STATUS, 1, true, "offline")) {
-            client.subscribe(TOPIC_CMD);
-            publishStatus("online");
-            Serial.println("[MQTT] connected");
-            return;
-        }
-        delay(1000);
+    if (client.connected()) return;
+
+    Serial.printf("[MQTT] Connecting to broker as %s...\n", deviceId);
+    char lastWill[128];
+    snprintf(lastWill, sizeof(lastWill), "{\"device\":\"%s\",\"status\":\"OFFLINE\"}", deviceId);
+    bool connected = false;
+    if (strlen(MQTT_USERNAME) > 0) {
+        connected = client.connect(
+            deviceId, MQTT_USERNAME, MQTT_PASSWORD,
+            MQTT_TOPIC_STATUS, 1, true, lastWill
+        );
+    } else {
+        connected = client.connect(deviceId, MQTT_TOPIC_STATUS, 1, true, lastWill);
+    }
+    if (connected) {
+        Serial.println("[MQTT] Connected");
+        client.subscribe(MQTT_TOPIC_CMD);
+        char online[128];
+        snprintf(online, sizeof(online), "{\"device\":\"%s\",\"status\":\"ONLINE\"}", deviceId);
+        client.publish(MQTT_TOPIC_STATUS, online, true);
+    } else {
+        Serial.printf("[MQTT] Connect failed, rc=%d\n", client.state());
+    }
+}
+
+void MQTTHandler::setCommandCallback(CommandCallback cb) {
+    onCommand = cb;
+}
+
+void MQTTHandler::handleMessage(char* topic, byte* payload, unsigned int length) {
+    StaticJsonDocument<256> doc;
+    DeserializationError err = deserializeJson(doc, payload, length);
+    if (err) {
+        Serial.printf("[MQTT] Bad command payload: %s\n", err.c_str());
+        return;
+    }
+
+    if (onCommand && doc.containsKey("pump1") && doc.containsKey("pump2") && doc.containsKey("servo_deg")) {
+        onCommand(doc["pump1"].as<bool>(), doc["pump2"].as<bool>(), doc["servo_deg"].as<int>());
+    } else {
+        Serial.println("[MQTT] Rejected incomplete rig command");
     }
 }
 
 void MQTTHandler::loop() {
-    if (!client.connected()) reconnect();
+    if (WiFi.status() != WL_CONNECTED) return;
+    if (!client.connected()) {
+        unsigned long now = millis();
+        if (now - lastReconnectAttempt > 5000) {
+            lastReconnectAttempt = now;
+            reconnect();
+        }
+        return;
+    }
     client.loop();
 }
 
@@ -88,80 +107,92 @@ bool MQTTHandler::isConnected() {
     return client.connected();
 }
 
-void MQTTHandler::publishStatus(const char* state) {
-    client.publish(TOPIC_STATUS, state, true);   // retained
-}
-
-void MQTTHandler::publishTelemetry(double ts, bool clockSynced,
-                                   float qIn, float qOut, float qBranch,
-                                   uint32_t pulsesIn, uint32_t pulsesOut, uint32_t pulsesBranch,
-                                   float busV, float currentMA, float powerMW,
-                                   const VibrationSample& vib,
-                                   float waterC, bool tempPresent,
-                                   bool pump1, bool pump2, int servoDeg,
-                                   uint32_t uptimeSec) {
-    if (!client.connected()) return;
-
+void MQTTHandler::publishTelemetry(unsigned long ts, uint32_t seq, float qIn, float qOut, float qBranch,
+                                    float currentMA, float voltageV,
+                                    uint32_t rawPulsesIn, uint32_t rawPulsesOut, uint32_t rawPulsesBranch,
+                                    bool pump1On, bool pump2On, int servoDeg,
+                                    unsigned long uptimeSec, int wifiRssi, uint32_t freeHeap,
+                                    const VibrationSample& vibration, const PiezoSample& piezo, bool vibrationValid,
+                                    float waterTempC) {
     StaticJsonDocument<1024> doc;
     doc["ts"] = ts;
-    doc["device"] = DEVICE_ID;
-    doc["mode"] = "live";
-    // Explicit, so the backend never has to infer whether the clock is real.
-    doc["clock_synced"] = clockSynced;
+    doc["seq"] = seq;
+    doc["device"] = deviceId;
 
     JsonObject flow = doc.createNestedObject("flow");
-    flow["q_in_lpm"]     = qIn;
-    flow["q_out_lpm"]    = qOut;
+    flow["q_in_lpm"] = qIn;
+    flow["q_out_lpm"] = qOut;
     flow["q_branch_lpm"] = qBranch;
-    // Raw counts alongside the converted rates, always. If a K-factor is later
-    // recalibrated, every stored experiment can be recomputed from these instead
-    // of re-running physical tests that may not be reproducible.
-    flow["pulses_in"]     = pulsesIn;
-    flow["pulses_out"]    = pulsesOut;
-    flow["pulses_branch"] = pulsesBranch;
+    flow["pulses_in"] = rawPulsesIn;
+    flow["pulses_out"] = rawPulsesOut;
+    flow["pulses_branch"] = rawPulsesBranch;
 
     JsonObject power = doc.createNestedObject("power");
-    power["bus_v"]      = busV;
+    power["bus_v"] = voltageV;
     power["current_ma"] = currentMA;
-    power["power_mw"]   = powerMW;
+    power["power_mw"] = voltageV * currentMA;
 
-    JsonObject v = doc.createNestedObject("vibration");
-    if (vib.hasAccelerometer) {
-        v["rms"]       = vib.rms;
-        v["band_low"]  = vib.bandLow;
-        v["band_mid"]  = vib.bandMid;
-        v["band_high"] = vib.bandHigh;
-    } else {
-        // null, not 0.0. Zero is a reading from a quiet pipe; null is no sensor.
-        // The backend marks the acoustic channel inactive and renormalises the
-        // fusion weights rather than scoring the rig as if it had been listened to.
-        v["rms"] = v["band_low"] = v["band_mid"] = v["band_high"] = (char*)nullptr;
-    }
-    if (vib.hasPiezo) {
-        v["piezo_rms"]         = vib.piezoRms;
-        v["piezo_centroid_hz"] = vib.piezoCentroid;
-    } else {
-        // The piezo disc is optional hardware — same reasoning as above.
-        v["piezo_rms"] = v["piezo_centroid_hz"] = (char*)nullptr;
-    }
-
-    JsonObject temp = doc.createNestedObject("temp");
-    if (tempPresent && !isnan(waterC)) temp["water_c"] = waterC;
-    else                               temp["water_c"] = (char*)nullptr;
-
-    JsonObject act = doc.createNestedObject("actuators");
-    act["pump1"]     = pump1;
-    act["pump2"]     = pump2;
-    act["servo_deg"] = servoDeg;
-    // No solenoid_state. This rig has no solenoid: leaks are opened by hand on a
-    // worm-drive clamp, and ground truth is recorded by the operator, not sensed.
+    JsonObject actuators = doc.createNestedObject("actuators");
+    actuators["pump1"] = pump1On;
+    actuators["pump2"] = pump2On;
+    actuators["servo_deg"] = servoDeg;
 
     JsonObject health = doc.createNestedObject("health");
-    health["uptime_s"]  = uptimeSec;
-    health["wifi_rssi"] = WiFi.RSSI();
-    health["free_heap"] = ESP.getFreeHeap();
+    health["uptime_s"] = uptimeSec;
+    health["wifi_rssi"] = wifiRssi;
+    health["free_heap"] = freeHeap;
+    // pressure_bar intentionally omitted — no physical pressure sensor on this
+    // rig; the backend derives an estimated value (see docs/MQTT_SPEC.md note).
 
-    char buffer[1024];
-    const size_t n = serializeJson(doc, buffer);
-    client.publish(TOPIC_TELEMETRY, buffer, n);
+    // vibration/temp are only included once a real burst has completed —
+    // an all-zeros vibration object would look like a valid clean-baseline
+    // reading to the backend's ratio-to-baseline detector, which is worse
+    // than just omitting the field until there's a real sample.
+    if (vibrationValid) {
+        JsonObject vib = doc.createNestedObject("vibration");
+        vib["rms"] = vibration.rms;
+        vib["band_low"] = vibration.band_low;
+        vib["band_mid"] = vibration.band_mid;
+        vib["band_high"] = vibration.band_high;
+        vib["piezo_rms"] = piezo.rms;
+        vib["piezo_centroid_hz"] = piezo.centroid_hz;
+    }
+    if (!isnan(waterTempC)) {
+        JsonObject tempObj = doc.createNestedObject("temp");
+        tempObj["water_c"] = waterTempC;
+    }
+
+    char buf[1024];
+    size_t n = serializeJson(doc, buf);
+
+    if (client.connected()) {
+        client.publish(
+            MQTT_TOPIC_TELEMETRY,
+            reinterpret_cast<const uint8_t*>(buf),
+            n,
+            false
+        );
+    } else {
+        Serial.printf("[Telemetry] (offline) Qin: %.2f | Qout: %.2f | Qbr: %.2f | I: %.1fmA\n", qIn, qOut, qBranch, currentMA);
+    }
+}
+
+void MQTTHandler::publishStatus(int wifiRssi, unsigned long uptimeSec, uint32_t heapFree) {
+    StaticJsonDocument<192> doc;
+    doc["device"] = deviceId;
+    doc["wifi_rssi"] = wifiRssi;
+    doc["uptime_sec"] = uptimeSec;
+    doc["heap_free"] = heapFree;
+    doc["status"] = client.connected() ? "ONLINE" : "DEGRADED";
+
+    char buf[192];
+    size_t n = serializeJson(doc, buf);
+    if (client.connected()) {
+        client.publish(
+            MQTT_TOPIC_STATUS,
+            reinterpret_cast<const uint8_t*>(buf),
+            n,
+            true
+        );
+    }
 }

@@ -9,7 +9,6 @@ def test_ina219_sensor(voltage=11.9, current_ma=425.0):
     assert 0.0 <= voltage <= 24.0, "Bus voltage out of range"
     assert current_ma >= 0.0, "Current cannot be negative"
     print("[PASS] INA219 current & voltage sensor test successful!")
-    return power_mw
 
 if __name__ == "__main__":
     test_ina219_sensor()

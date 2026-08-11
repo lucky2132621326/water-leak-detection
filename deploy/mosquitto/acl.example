@@ -1,0 +1,12 @@
+# Copy to the broker's private runtime directory and reference it from
+# mosquitto.conf. The public Cloudflare tunnel must never expose port 1883.
+
+user rig_device
+topic write rig/telemetry
+topic write rig/status
+topic read rig/cmd
+
+user rig_backend
+topic read rig/telemetry
+topic read rig/status
+topic write rig/cmd
