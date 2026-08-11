@@ -22,7 +22,7 @@ const TABS: { id: StatusFilter; label: string; countKey: keyof AlertsSummary["co
  * Alert Center — the operator's incident queue.
  *
  * Every row is a real detection incident aggregated by backend/alerts from the
- * live or replay pipeline, with its quantified impact attached. Dispositioning
+ * mock or live pipeline, with its quantified impact attached. Dispositioning
  * an alert here is what feeds the Water Savings counter.
  */
 export const AlertsView: React.FC = () => {

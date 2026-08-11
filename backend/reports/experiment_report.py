@@ -10,7 +10,7 @@ import time
 
 from backend.repositories.telemetry_repository import TelemetryRepository
 from backend.repositories.detection_repository import LeakEventRepository
-from backend.replay.replay_runner import ReplayRunner
+from backend.benchmark.benchmark_scorer import BenchmarkScorer
 from backend.impact.impact_service import ImpactService
 from backend.reports.charts import line_chart
 from backend.repositories.db import get_db
@@ -39,7 +39,7 @@ class ExperimentReportGenerator:
             return {"run_id": run_id, "error": f"No stored telemetry for run '{run_id}'."}
 
         leak_events = self.leak_event_repo.get_for_run(run_id)
-        evaluation = ReplayRunner().run(run_id)
+        evaluation = BenchmarkScorer().run(run_id)
         metrics = evaluation.get("metrics") or {}
 
         start_ts = telemetry[0]["ts"]
@@ -77,7 +77,7 @@ class ExperimentReportGenerator:
 
     @staticmethod
     def _series(telemetry):
-        out = {"ts": [], "q_in": [], "q_out": [], "q_branch": [], "residual": [], "current_ma": [], "pressure_bar": []}
+        out = {"ts": [], "q_in": [], "q_out": [], "q_branch": [], "residual": [], "current_ma": [], "band_mid": []}
         for d in telemetry:
             flow, power = d.get("flow", {}), d.get("power", {})
             q_in = flow.get("q_in_lpm", 0.0)
@@ -89,7 +89,7 @@ class ExperimentReportGenerator:
             out["q_branch"].append(round(q_branch, 3))
             out["residual"].append(round(q_in - q_out - q_branch, 3))
             out["current_ma"].append(round(power.get("current_ma", 0.0), 1))
-            out["pressure_bar"].append(d.get("pressure_bar"))
+            out["band_mid"].append((d.get("vibration") or {}).get("band_mid"))
         return out
 
     def _events(self, leak_events, run_start_ts):

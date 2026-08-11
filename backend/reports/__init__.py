@@ -1,7 +1,7 @@
 """Automatic Experiment Reports
 
 Builds a complete, self-contained write-up of a stored experiment run: metadata,
-ground-truth leak events, detector performance scored by the real replay runner,
+ground-truth leak events, detector performance scored by the real BenchmarkScorer,
 plotted telemetry, quantified impact, and auto-generated conclusions.
 
 Rendered as standalone HTML with print styling rather than through a PDF

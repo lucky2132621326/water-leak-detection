@@ -1,10 +1,13 @@
-"""Replay Runner
+"""Benchmark Scorer
 
-Streams a stored run's telemetry through the SAME DetectionPipeline used by
-live MQTT ingestion, then scores it against that run's ground-truth leak
-events (precision/recall/F1/latency — all computed here, not hardcoded).
-This is what makes "replay mode" a real second data source rather than a
-separately mocked implementation.
+Scores a stored run offline: streams its telemetry through the SAME
+DetectionPipeline that live and mock ingestion use, then grades the result
+against that run's logged ground-truth leak windows. Precision, recall, F1 and
+latency are all computed here, never authored.
+
+This is an analysis tool, not an operating mode. It runs on demand against
+recorded data and does not feed the dashboard. Mock scenarios, which carry
+known ground truth by construction, are its corpus.
 """
 from backend.repositories.telemetry_repository import TelemetryRepository
 from backend.repositories.detection_repository import LeakEventRepository, DetectionRepository
@@ -13,7 +16,7 @@ from backend.response.response_builder import build_response
 from backend.utils.logger import logger
 
 
-class ReplayRunner:
+class BenchmarkScorer:
     def __init__(self, telemetry_repo=None, leak_event_repo=None, detection_repo=None):
         self.telemetry_repo = telemetry_repo or TelemetryRepository()
         self.leak_event_repo = leak_event_repo or LeakEventRepository()
@@ -24,7 +27,7 @@ class ReplayRunner:
         ground_truth = self.leak_event_repo.get_for_run(run_id)
 
         if not telemetry_docs:
-            logger.warning(f"[Replay] No telemetry found for run_id={run_id}")
+            logger.warning(f"[Benchmark] No telemetry found for run_id={run_id}")
             return {"run_id": run_id, "samples": 0, "metrics": None}
 
         pipeline = DetectionPipeline()
@@ -45,7 +48,6 @@ class ReplayRunner:
                 voltage_v=power.get("voltage", 12.0),
                 pump_on=actuators.get("pump1", True),
                 servo_state_deg=actuators.get("servo_deg", 0),
-                pressure_bar=doc.get("pressure_bar"),
             )
             response = build_response(result)
             self.detection_repo.save_response(response, run_id=run_id)

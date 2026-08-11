@@ -1,5 +1,80 @@
+# Detector tuning and rig calibration — the single source of truth for
+# detection behaviour.
+#
+# Read at startup by backend/detectors/*. Restart the API after editing;
+# thresholds are deliberately not writable over HTTP so a running experiment
+# cannot have its detection criteria changed mid-run.
+#
+# THERE IS NO PRESSURE SECTION. This rig has no transducer, and a flow-derived
+# "pressure" would be the mass-balance signal under another name.
+
+topology:
+  # Does the branch meter measure flow LEAVING the monitored loop?
+  #
+  # false for this rig: Flow 3 sits on Branch B, which flows through Flow 2 on
+  # its way back to the bucket, so Q_out already contains Q_branch. Subtracting
+  # it again double-counts the branch and drives every residual to about
+  # -2 L/min. See backend/detectors/residual.py.
+  #
+  # Set true only if the branch is re-plumbed to exit the loop past its meter.
+  subtract_branch: false
+
+calibration:
+  # --- flow meter K-factors, pulses per litre -------------------------------
+  # YF-S201 nominal is ~450, but per-unit variation is significant and each
+  # sensor must be calibrated volumetrically against a measuring cylinder.
+  # Never hardcode 450 in application logic.
+  k1_pulses_per_litre: 450.0     # Flow 1, Q_in
+  k2_pulses_per_litre: 450.0     # Flow 2, Q_out
+  k3_pulses_per_litre: 450.0     # Flow 3, Q_branch
+
+  # --- residual calibration -------------------------------------------------
+  # bias  = mean residual over a 30-minute zero-leak run. The permanent
+  #         systematic mismatch between two physically different meters.
+  # sigma = standard deviation over that same run. THE FOUNDATION OF DETECTION —
+  #         every threshold below is expressed as a multiple of it.
+  bias_lpm: 0.0
+  sigma_lpm: 0.05
+
+  # sigma is flow-dependent. Where multiple calibration points exist, list them
+  # and the loader interpolates; a single point falls back to sigma_lpm.
+  # sigma_by_flow:
+  #   - {q_lpm: 2.0, sigma_lpm: 0.03}
+  #   - {q_lpm: 5.0, sigma_lpm: 0.05}
+  sigma_by_flow: []
+
+  # K-factor correction per degree C, from the DS18B20. Water viscosity changes
+  # with temperature, which walks the meters' calibration and shows up as slow
+  # residual drift over a long run — easily misread as a worsening leak.
+  # Default 0.0 = no correction until characterised experimentally.
+  temp_k_coeff_per_c: 0.0
+  temp_reference_c: 25.0
+
+# Per-tee clamp calibration: turns of the worm-drive screw -> litres per minute.
+# Determined volumetrically per tee. This is what makes an operator-logged leak
+# a ground-truth magnitude rather than a guess.
+clamp_calibration:
+  A:
+    0.25: 0.18
+    0.5: 0.34
+    0.75: 0.51
+    1.0: 0.72
+  B:
+    0.25: 0.18
+    0.5: 0.34
+    0.75: 0.51
+    1.0: 0.72
+  C:
+    0.25: 0.18
+    0.5: 0.34
+    0.75: 0.51
+    1.0: 0.72
+
 mass_balance:
+  # Threshold is k * sigma, with sigma from the calibration block above.
   sigma_threshold: 3.0
+  # Consecutive alarming SAMPLES required before this detector reports. At the
+  # rig's 1 Hz publish rate samples and seconds coincide.
   persistence_seconds: 5
   zero_flow_tolerance: 0.05
 
@@ -15,7 +90,78 @@ mnf:
 cusum:
   k_allowance: 0.15
   h_decision_threshold: 5.0
+  # Ceiling on the accumulator as a multiple of h. Without it, recovery time
+  # scales with leak duration — a 2-minute leak once kept CUSUM latched for 36
+  # minutes after the valve shut.
+  cap_multiple: 2.0
+
+acoustic:
+  # band_mid (50-150 Hz) must exceed this multiple of the rig's own clean
+  # baseline. A RATIO, never an absolute: pump vibration dominates the absolute
+  # energy and varies with duty, mounting and temperature.
+  vib_ratio_threshold: 1.8
+  persistence_samples: 5
+  warmup_samples: 20
+  baseline_alpha: 0.02
+  # Below this the rig is effectively silent (pump off, or a dead sensor).
+  # Ratios against a near-zero baseline explode into meaningless multiples.
+  min_baseline_energy: 0.0001
+
+detection:
+  # Seconds a candidate must persist before the state machine confirms it.
+  #
+  # CONSISTENCY RULE: median detection latency can never be below this number.
+  # Any reported latency under persistence_s is fabricated by definition, and
+  # tests/test_scenarios.py asserts it.
+  persistence_s: 10
+  recovery_s: 5
+
+scoring:
+  # A detection counts as a true positive if it lands between a logged leak's
+  # open_ts and close_ts, plus this grace window. The grace covers the physical
+  # reality that a clamp does not open instantly and the residual takes a moment
+  # to propagate past the meters.
+  grace_sec: 5.0
+
+plausibility:
+  # Cross-checks the flow residual against the two channels that are physically
+  # independent of the flow meters. mass_balance, cusum and mnf all read the SAME
+  # residual, so a dead outlet meter makes three detectors "agree" on a leak that
+  # never happened — see backend/detectors/plausibility.py.
+  enabled: true
+
+  # Rig calibration. Measure it: open a known leak, record how far pump current
+  # moves per L/min escaping. Setting it to 0 disables that channel's veto.
+  current_ma_per_leak_lpm: 35.0
+
+  # Leak size above which the acoustic channel is expected to hear something.
+  # Below it a leak may genuinely be too quiet over pump noise, so silence
+  # proves nothing and must not veto.
+  acoustic_min_residual_lpm: 1.0
+
+  # A channel may only contradict when the predicted effect clears its own
+  # detection threshold by this factor. Keeps calibration error and sensor noise
+  # from manufacturing a veto near the boundary.
+  margin: 2.0
+
+  # Hard floor: never veto a claim smaller than this, whatever the arithmetic
+  # says. Small leaks are the ones worth catching, so a mis-set constant must
+  # not be able to silence them.
+  min_residual_lpm: 0.75
 
 fusion:
   high_alarm_confidence: 0.75
   medium_alarm_confidence: 0.50
+  # Weights applied by backend/fusion/fusion_engine.py, renormalised over the
+  # detectors that can actually contribute so a rig missing the accelerometer
+  # scores on the same 0-1 scale.
+  #
+  # The two flow-independent channels (current_signature, acoustic) carry 0.44
+  # between them against 0.56 for the three flow-derived ones, because agreement
+  # ACROSS channels is stronger evidence than magnitude on any single one.
+  weights:
+    mass_balance: 0.30
+    current_signature: 0.22
+    cusum: 0.16
+    mnf: 0.10
+    acoustic: 0.22

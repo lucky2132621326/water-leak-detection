@@ -9,23 +9,27 @@ import { LocalizationView } from "./components/LocalizationView";
 import { AnalyticsView } from "./components/AnalyticsView";
 import { CalibrationView } from "./components/CalibrationView";
 import { WorkOrderSchedulerView } from "./components/WorkOrderSchedulerView";
-import { ReplaySystemView } from "./components/ReplaySystemView";
+import { ScenarioLabView } from "./components/ScenarioLabView";
 import { ReportsView } from "./components/ReportsView";
 import { AlertsView } from "./components/AlertsView";
 import { SettingsView } from "./components/SettingsView";
 import { ImpactSimulatorView } from "./components/ImpactSimulatorView";
 import { LeakHistoryView } from "./components/LeakHistoryView";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
-import type { AlertsSummary, SavingsSummary } from "./types";
+import type { AlertsSummary, SavingsSummary, LeakAlert, OperatingMode } from "./types";
+import type { SystemStatus } from "./components/SystemStatusRow";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
   const [health, setHealth] = useState<any>(null);
   const [latestTelemetry, setLatestTelemetry] = useState<any>(null);
   const [telemetryHistory, setTelemetryHistory] = useState<any[]>([]);
-  const [mode, setMode] = useState<"live" | "replay">("replay");
+  const [mode, setMode] = useState<OperatingMode>("mock");
   const [savings, setSavings] = useState<SavingsSummary | null>(null);
   const [alertsSummary, setAlertsSummary] = useState<AlertsSummary | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [recentAlerts, setRecentAlerts] = useState<LeakAlert[]>([]);
+  const [scenarioName, setScenarioName] = useState<string | null>(null);
 
   // Fetch Health & Live Telemetry State
   const fetchState = () => {
@@ -33,7 +37,7 @@ export default function App() {
       .then((res) => res.json())
       .then((data) => {
         setHealth(data);
-        if (data?.mode === "live" || data?.mode === "replay") setMode(data.mode);
+        if (data?.mode === "live" || data?.mode === "mock") setMode(data.mode);
       })
       .catch((err) => console.error(err));
 
@@ -64,6 +68,18 @@ export default function App() {
       .then((res) => res.json())
       .then(setAlertsSummary)
       .catch(() => undefined);
+
+    fetch("/api/status")
+      .then((res) => res.json())
+      .then(setSystemStatus)
+      // Leave the previous status rather than clearing it — the status row
+      // renders "unknown" only when it has genuinely never had data.
+      .catch(() => undefined);
+
+    fetch("/api/alerts?limit=5")
+      .then((res) => res.json())
+      .then((data) => setRecentAlerts(Array.isArray(data) ? data : []))
+      .catch(() => undefined);
   };
 
   useEffect(() => {
@@ -77,6 +93,13 @@ export default function App() {
     const interval = setInterval(fetchImpactState, 5000);
     return () => clearInterval(interval);
   }, []);
+
+    // Which mock scenario is streaming — shown on the Dashboard instead of a
+    // stale stored run id.
+    fetch("/api/mode")
+      .then((res) => res.json())
+      .then((d) => setScenarioName(d?.source?.scenario?.name ?? null))
+      .catch(() => undefined);
 
   const activeAlertCount = alertsSummary?.counts.active ?? 0;
 
@@ -103,11 +126,13 @@ export default function App() {
   };
 
   const handleToggleMode = () => {
-    const nextMode = mode === "live" ? "replay" : "live";
+    // Two modes only. Switching resets all detector state on the backend, so
+    // a scenario never inherits the rig's learned baseline (or the reverse).
+    const nextMode: OperatingMode = mode === "live" ? "mock" : "live";
     fetch("/api/mode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: nextMode, run_id: nextMode === "replay" ? "RUN_001" : undefined })
+      body: JSON.stringify({ mode: nextMode, scenario_id: nextMode === "mock" ? "sudden_leak" : undefined })
     })
       .then((res) => res.json())
       .then((data) => {
@@ -162,6 +187,10 @@ export default function App() {
               impact={latestTelemetry?.impact}
               savings={savings}
               onAnalyzeImpact={() => setActiveTab("impact-simulator")}
+              systemStatus={systemStatus}
+              evaluation={latestTelemetry?.evaluation}
+              alerts={recentAlerts}
+              scenarioName={scenarioName}
             />
           )}
 
@@ -172,6 +201,7 @@ export default function App() {
               onToggleLeak={handleToggleLeak}
               onTogglePump={handleTogglePump}
               onToggleAirBubbles={handleToggleAirBubbles}
+              mode={mode}
             />
           )}
 
@@ -185,7 +215,7 @@ export default function App() {
 
           {activeTab === "impact-simulator" && <ImpactSimulatorView />}
 
-          {activeTab === "replay" && <ReplaySystemView />}
+          {activeTab === "scenarios" && <ScenarioLabView onModeChange={fetchState} />}
 
           {activeTab === "analytics" && <AnalyticsView />}
 

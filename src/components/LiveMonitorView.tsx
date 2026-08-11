@@ -2,7 +2,11 @@ import React from "react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { Play, Square, ShieldAlert, Waves } from "lucide-react";
 
+import { LeakBenchControls } from "./LeakBenchControls";
+import type { OperatingMode } from "../types";
+
 interface LiveMonitorViewProps {
+  mode?: OperatingMode;
   telemetryHistory: any[];
   latestTelemetry: any;
   onToggleLeak: (action: "OPEN" | "CLOSE", size?: number) => void;
@@ -15,7 +19,8 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
   latestTelemetry,
   onToggleLeak,
   onTogglePump,
-  onToggleAirBubbles
+  onToggleAirBubbles,
+  mode = "mock"
 }) => {
   const latest = latestTelemetry?.latest;
   const isPumpOn = latestTelemetry?.pump_on ?? true;
@@ -46,7 +51,8 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Pump Control */}
+            {/* Pump control only — leak injection now lives in the dedicated
+                bench below, which works identically in both operating modes. */}
             <button
               onClick={() => onTogglePump(!isPumpOn)}
               className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center space-x-2 transition shadow-2xs ${
@@ -58,54 +64,11 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
               {isPumpOn ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
               <span>{isPumpOn ? "Stop Pump (12V)" : "Start Pump"}</span>
             </button>
-
-            {/* Leak Injector Buttons */}
-            {!isLeakActive ? (
-              <div className="flex items-center space-x-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-200/80">
-                <span className="text-xs text-slate-500 font-bold px-2">Inject Leak:</span>
-                <button
-                  onClick={() => onToggleLeak("OPEN", 0.50)}
-                  className="bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 font-bold px-3 py-1.5 rounded-lg text-xs transition shadow-2xs"
-                >
-                  Small (0.5 LPM)
-                </button>
-                <button
-                  onClick={() => onToggleLeak("OPEN", 1.25)}
-                  className="bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-800 font-extrabold px-3 py-1.5 rounded-lg text-xs transition shadow-2xs"
-                >
-                  Medium (1.25 LPM)
-                </button>
-                <button
-                  onClick={() => onToggleLeak("OPEN", 2.50)}
-                  className="bg-rose-600 text-white hover:bg-rose-700 font-black px-3.5 py-1.5 rounded-lg text-xs transition shadow-md shadow-rose-600/20"
-                >
-                  Large (2.5 LPM)
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => onToggleLeak("CLOSE")}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition shadow-md shadow-emerald-600/20 flex items-center space-x-2"
-              >
-                <ShieldAlert className="w-4 h-4" />
-                <span>Seal Leak (Close Solenoid)</span>
-              </button>
-            )}
-
-            {/* Air Bubble Anomaly Simulator */}
-            <button
-              onClick={() => onToggleAirBubbles(!airBubbles)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition ${
-                airBubbles
-                  ? "bg-purple-50 border-purple-300 text-purple-700 shadow-2xs"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Air Bubbles: {airBubbles ? "ON" : "OFF"}
-            </button>
           </div>
         </div>
       </div>
+
+      <LeakBenchControls mode={mode} />
 
       {/* Metric Cards Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-5">

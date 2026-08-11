@@ -25,7 +25,9 @@ import {
   CartesianGrid
 } from "recharts";
 import { ImpactSummaryStrip } from "./ImpactSummaryStrip";
-import type { ImpactSummary, SavingsSummary } from "../types";
+import { SystemStatusRow, SystemStatus } from "./SystemStatusRow";
+import type { ImpactSummary, SavingsSummary, LeakAlert } from "../types";
+import { severityStyle, formatTimestamp, formatRate } from "../lib/impact";
 
 // Custom Pump Graphic matching screenshot
 const PumpGraphic = ({ label, isOn }: { label: string; isOn: boolean }) => (
@@ -104,6 +106,13 @@ const GreenBranchValveGraphic = ({ value }: { value: string }) => (
   </div>
 );
 
+const DETECTOR_ROWS = [
+  { key: "mass_balance", label: "Mass Balance (3-Sigma)", bar: "bg-blue-600" },
+  { key: "current_signature", label: "Current Signature", bar: "bg-purple-600" },
+  { key: "cusum", label: "CUSUM Micro-Leak", bar: "bg-emerald-500" },
+  { key: "mnf", label: "MNF Night Baseline", bar: "bg-amber-500" },
+];
+
 interface DashboardViewProps {
   latestTelemetry?: any;
   telemetryHistory?: any[];
@@ -113,6 +122,10 @@ interface DashboardViewProps {
   impact?: ImpactSummary | null;
   savings?: SavingsSummary | null;
   onAnalyzeImpact?: () => void;
+  systemStatus?: SystemStatus | null;
+  evaluation?: any;
+  alerts?: LeakAlert[];
+  scenarioName?: string | null;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -123,101 +136,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onTogglePump,
   impact,
   savings,
-  onAnalyzeImpact
+  onAnalyzeImpact,
+  systemStatus,
+  evaluation,
+  alerts = [],
+  scenarioName
 }) => {
-  // Live values matching screenshot defaults if available, otherwise fallback
-  const qIn = latestTelemetry?.latest?.q_in ?? 12.45;
-  const qOut = latestTelemetry?.latest?.q_out ?? 11.08;
-  const qBranch = latestTelemetry?.latest?.q_branch ?? 1.32;
-  const residual = Number((qIn - (qOut + qBranch)).toFixed(2)); // 1.37 L/min
-  const residualPercent = qIn > 0 ? Number(((residual / qIn) * 100).toFixed(2)) : 11.0;
-  const currentAmp = Number(((latestTelemetry?.latest?.current_ma ?? 1420) / 1000).toFixed(2)); // 1.42 A
-  const voltage = latestTelemetry?.latest?.voltage_v ?? 12.31;
-  const isLeak = latestTelemetry?.leak_active ?? true;
-  const isPumpOn = latestTelemetry?.pump_on ?? true;
+  // No fabricated fallbacks. If the backend is unreachable these read zero and
+  // the status row reports the fault — previously they fell back to invented
+  // numbers (12.45 / 11.08 / 1.42 A), so a dead backend looked like a live rig.
+  const hasTelemetry = Boolean(latestTelemetry?.latest);
+  const qIn = latestTelemetry?.latest?.q_in ?? 0;
+  const qOut = latestTelemetry?.latest?.q_out ?? 0;
+  const qBranch = latestTelemetry?.latest?.q_branch ?? 0;
+  const residual = Number((qIn - (qOut + qBranch)).toFixed(2));
+  const residualPercent = qIn > 0 ? Number(((residual / qIn) * 100).toFixed(2)) : 0;
+  const currentAmp = Number(((latestTelemetry?.latest?.current_ma ?? 0) / 1000).toFixed(2));
+  const voltage = latestTelemetry?.latest?.voltage_v ?? 0;
+  const isLeak = latestTelemetry?.leak_active ?? false;
+  const isPumpOn = latestTelemetry?.pump_on ?? false;
 
-  // Chart trend data points (Last 10 minutes)
-  const chartData = telemetryHistory.length > 0 
-    ? telemetryHistory.slice(-12).map((sample, idx) => {
-        const timeObj = new Date(sample.ts * 1000);
-        const timeLabel = timeObj.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
-        return {
-          time: timeLabel || `10:${14 + idx * 2}`,
-          Qin: sample.q_in || (12.45 + (Math.sin(idx) * 0.4)),
-          Qout: sample.q_out || (11.08 + (Math.cos(idx) * 0.3)),
-          Residual: sample.residual || (1.37 + (Math.sin(idx * 0.5) * 0.2))
-        };
-      })
-    : [
-        { time: "10:14", Qin: 12.8, Qout: 10.9, Residual: 1.9 },
-        { time: "10:16", Qin: 12.2, Qout: 10.5, Residual: 1.7 },
-        { time: "10:18", Qin: 12.6, Qout: 11.1, Residual: 1.5 },
-        { time: "10:20", Qin: 12.3, Qout: 10.8, Residual: 1.5 },
-        { time: "10:22", Qin: 12.5, Qout: 11.2, Residual: 1.3 },
-        { time: "10:24", Qin: 12.45, Qout: 11.08, Residual: 1.37 },
-      ];
+  // Full history window the API already serves (120 samples ≈ 2 min at 1 Hz).
+  // This previously took only the last 12 while the heading claimed 10 minutes.
+  const chartData = telemetryHistory.slice(-120).map((sample) => ({
+    time: new Date(sample.ts * 1000).toLocaleTimeString("en-US", {
+      hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }),
+    Qin: sample.q_in ?? 0,
+    Qout: sample.q_out ?? 0,
+    Residual: sample.residual ?? 0,
+  }));
+
+  const windowLabel = chartData.length > 1
+    ? `Last ${Math.max(1, Math.round((telemetryHistory[telemetryHistory.length - 1].ts - telemetryHistory[Math.max(0, telemetryHistory.length - 120)].ts) / 60))} min · ${chartData.length} samples`
+    : "awaiting samples";
 
   return (
     <div className="space-y-6">
-      {/* 1. Top 4 System Status Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {/* Card 1: ESP32 Controller */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
-          <div className="space-y-1">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">ESP32 Controller</h3>
-            <p className="text-xl font-extrabold text-emerald-600">Online</p>
-            <div className="flex items-center space-x-1.5 text-xs text-slate-500 font-medium pt-0.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Uptime: 2d 14h 32m</span>
-            </div>
-          </div>
-          <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shadow-2xs">
-            <Cpu className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Card 2: MQTT Broker */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
-          <div className="space-y-1">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">MQTT Broker</h3>
-            <p className="text-xl font-extrabold text-emerald-600">Connected</p>
-            <div className="flex items-center space-x-1.5 text-xs text-slate-500 font-medium pt-0.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Latency: 28 ms</span>
-            </div>
-          </div>
-          <div className="w-12 h-12 rounded-2xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-600 shadow-2xs">
-            <Wifi className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Card 3: MongoDB */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
-          <div className="space-y-1">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">MongoDB</h3>
-            <p className="text-xl font-extrabold text-emerald-600">Connected</p>
-            <div className="flex items-center space-x-1.5 text-xs text-slate-500 font-medium pt-0.5">
-              <Database className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Records: 1,245,892</span>
-            </div>
-          </div>
-          <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shadow-2xs">
-            <Database className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Card 4: System Health */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
-          <div className="space-y-1">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">System Health</h3>
-            <p className="text-xl font-extrabold text-emerald-600">Healthy</p>
-            <p className="text-xs text-slate-500 font-medium pt-0.5">All systems normal</p>
-          </div>
-          <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 shadow-2xs">
-            <Activity className="w-6 h-6" />
-          </div>
-        </div>
-      </div>
+      {/* 1. System status — real component health from /api/status */}
+      <SystemStatusRow status={systemStatus} />
 
       {/* 1b. Impact strip — translates the current leak rate into litres, rupees
              and a severity category, plus the cumulative savings KPI. */}
@@ -310,11 +267,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Right Column (4 cols): Active Experiment & Detector Status Stack */}
         <div className="lg:col-span-4 space-y-6">
-          {/* Active Experiment Card */}
+          {/* Detection session — derived from real telemetry and stored runs */}
           <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-slate-900 tracking-tight">Active Experiment</h3>
-              <button 
+              <h3 className="text-sm font-bold text-slate-900 tracking-tight">Detection Session</h3>
+              <button
                 onClick={() => onNavigateTab("experiment-control")}
                 className="text-xs font-bold text-blue-600 hover:text-blue-700 transition"
               >
@@ -324,50 +281,77 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-[11px] text-slate-400 font-medium">Experiment ID</div>
-                  <div className="text-sm font-extrabold text-slate-900 font-mono">EXP-2025-05-24-001</div>
+                <div className="min-w-0">
+                  <div className="text-[11px] text-slate-400 font-medium">
+                    {latestTelemetry?.mode === "live" ? "Live Sensors" : "Mock Data"}
+                  </div>
+                  <div className="text-sm font-extrabold text-slate-900 font-mono truncate">
+                    {latestTelemetry?.mode === "live" ? "ESP32 Rig" : (scenarioName ?? "Mock Generator")}
+                  </div>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold">
-                  RUNNING
+                <span className={`px-3 py-1 rounded-full text-[11px] font-bold ${
+                  hasTelemetry ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
+                }`}>
+                  {hasTelemetry ? "RUNNING" : "IDLE"}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-100">
-                <div>
-                  <span className="text-slate-400 block text-[11px]">Started At</span>
-                  <span className="font-semibold text-slate-800">May 24, 2025 08:15 AM</span>
+                <div className="min-w-0">
+                  <span className="text-slate-400 block text-[11px]">Last Sample</span>
+                  <span className="font-semibold text-slate-800">
+                    {latestTelemetry?.latest?.ts ? formatTimestamp(latestTelemetry.latest.ts) : "—"}
+                  </span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Duration</span>
-                  <span className="font-semibold text-slate-800">02h 09m 38s</span>
+                  <span className="text-slate-400 block text-[11px]">Current Leak</span>
+                  <span className="font-semibold text-slate-800">
+                    {latestTelemetry?.latest?.leak_active
+                      ? `${formatRate(residual)} (${latestTelemetry?.evaluation?.zone ?? "locating"})`
+                      : "none"}
+                  </span>
                 </div>
               </div>
 
-              {/* Red Leak Alarm Banner */}
-              <div 
-                onClick={() => onNavigateTab("leak-detection")}
-                className="bg-rose-600 hover:bg-rose-700 text-white p-3.5 rounded-2xl flex items-center justify-between cursor-pointer transition shadow-md shadow-rose-600/20"
-              >
-                <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                    <AlertTriangle className="w-5 h-5 text-white" />
+              {evaluation?.is_alarm ? (
+                <div
+                  onClick={() => onNavigateTab("alerts")}
+                  className="bg-rose-600 hover:bg-rose-700 text-white p-3.5 rounded-2xl flex items-center justify-between cursor-pointer transition shadow-md shadow-rose-600/20"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black tracking-wide uppercase">LEAK DETECTED</div>
+                      <div className="text-xs font-semibold text-rose-100">
+                        {evaluation.zone} · {Number(evaluation.likelihood_score ?? 0).toFixed(1)}% likelihood
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-white/80" />
+                </div>
+              ) : (
+                <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 p-3.5 rounded-2xl flex items-center space-x-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                    <Droplet className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-black tracking-wide uppercase">LEAK DETECTED</div>
-                    <div className="text-xs font-semibold text-rose-100">Confidence: 92.4%</div>
+                    <div className="text-xs font-black tracking-wide uppercase">No Leak Detected</div>
+                    <div className="text-[11px] font-semibold text-emerald-600">
+                      residual {formatRate(residual)}
+                    </div>
                   </div>
                 </div>
-                <ChevronRight className="w-5 h-5 text-white/80" />
-              </div>
+              )}
             </div>
           </div>
 
-          {/* Detector Status Card */}
+          {/* Detector Status — live per-detector state from the pipeline */}
           <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-slate-900 tracking-tight">Detector Status</h3>
-              <button 
+              <button
                 onClick={() => onNavigateTab("leak-detection")}
                 className="text-xs font-bold text-blue-600 hover:text-blue-700 transition"
               >
@@ -376,62 +360,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             <div className="space-y-4">
-              {/* Mass Balance Detector */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center space-x-2">
-                    <Scale className="w-4 h-4 text-blue-600" />
-                    <span className="font-semibold text-slate-800">Mass Balance Detector</span>
+              {DETECTOR_ROWS.map(({ key, label, bar }) => {
+                const d = evaluation?.detectors?.[key];
+                const confidence = Number(d?.confidence ?? 0);
+                const alarm = Boolean(d?.is_alarm);
+                return (
+                  <div key={key} className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-800">{label}</span>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-slate-900">
+                          {d ? `${(confidence * 100).toFixed(1)}%` : "—"}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase ${
+                          !d ? "bg-slate-100 text-slate-500"
+                            : alarm ? "bg-rose-100 text-rose-700"
+                            : confidence > 0 ? "bg-amber-100 text-amber-700"
+                            : "bg-emerald-100 text-emerald-700"
+                        }`}>
+                          {!d ? "N/A" : alarm ? "ALERT" : confidence > 0 ? "SUSPECT" : "OK"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                      <div className={`h-full rounded-full transition-all duration-500 ${bar}`}
+                           style={{ width: `${Math.max(2, confidence * 100)}%` }} />
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-slate-900">92.4%</span>
-                    <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-700 text-[10px] font-extrabold uppercase">
-                      ALERT
-                    </span>
-                  </div>
-                </div>
-                <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div className="h-full bg-blue-600 rounded-full" style={{ width: "92.4%" }} />
-                </div>
-              </div>
-
-              {/* Current Signature Detector */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center space-x-2">
-                    <Zap className="w-4 h-4 text-purple-600" />
-                    <span className="font-semibold text-slate-800">Current Signature Detector</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-slate-900">85.7%</span>
-                    <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-700 text-[10px] font-extrabold uppercase">
-                      ALERT
-                    </span>
-                  </div>
-                </div>
-                <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div className="h-full bg-purple-600 rounded-full" style={{ width: "85.7%" }} />
-                </div>
-              </div>
-
-              {/* CUSUM Detector */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center space-x-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-600" />
-                    <span className="font-semibold text-slate-800">CUSUM Detector</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-slate-900">78.3%</span>
-                    <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 text-[10px] font-extrabold uppercase">
-                      SUSPECT
-                    </span>
-                  </div>
-                </div>
-                <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: "78.3%" }} />
-                </div>
-              </div>
+                );
+              })}
+              {!evaluation && (
+                <p className="text-[11px] text-slate-400 pt-1">
+                  Awaiting telemetry — detector state appears once samples arrive.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -489,10 +451,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Center Column (5 cols): Telemetry Trend (Last 10 Minutes) */}
+        {/* Center Column (5 cols): Telemetry Trend — window derived from the
+            data actually rendered, not a fixed claim in the heading. */}
         <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-bold text-slate-900 tracking-tight">Telemetry Trend (Last 10 Minutes)</h3>
+            <h3 className="text-sm font-bold text-slate-900 tracking-tight">
+              Telemetry Trend <span className="font-medium text-slate-400">({windowLabel})</span>
+            </h3>
             <div className="flex items-center space-x-3 text-xs font-medium">
               <span className="flex items-center space-x-1 text-blue-600">
                 <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block" />
@@ -526,11 +491,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Right Column (4 cols): Recent Alerts */}
+        {/* Recent Alerts — real incidents from the Alert Center */}
         <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-bold text-slate-900 tracking-tight">Recent Alerts</h3>
-            <button 
+            <button
               onClick={() => onNavigateTab("alerts")}
               className="text-xs font-bold text-blue-600 hover:text-blue-700 transition"
             >
@@ -539,50 +504,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="space-y-3.5">
-            {/* Alert 1 */}
-            <div 
-              onClick={() => onNavigateTab("alerts")}
-              className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition cursor-pointer border border-transparent hover:border-slate-100"
-            >
-              <div className="flex items-start space-x-3">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 mt-1 shrink-0" />
-                <div>
-                  <div className="text-xs font-bold text-slate-800">Leak detected with high confidence</div>
-                  <div className="text-[11px] text-slate-400">May 24, 2025 10:24:10 AM</div>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-            </div>
-
-            {/* Alert 2 */}
-            <div 
-              onClick={() => onNavigateTab("alerts")}
-              className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition cursor-pointer border border-transparent hover:border-slate-100"
-            >
-              <div className="flex items-start space-x-3">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 mt-1 shrink-0" />
-                <div>
-                  <div className="text-xs font-bold text-slate-800">Residual above threshold</div>
-                  <div className="text-[11px] text-slate-400">May 24, 2025 10:22:45 AM</div>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-            </div>
-
-            {/* Alert 3 */}
-            <div 
-              onClick={() => onNavigateTab("alerts")}
-              className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition cursor-pointer border border-transparent hover:border-slate-100"
-            >
-              <div className="flex items-start space-x-3">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-500 mt-1 shrink-0" />
-                <div>
-                  <div className="text-xs font-bold text-slate-800">Experiment started</div>
-                  <div className="text-[11px] text-slate-400">May 24, 2025 08:15:00 AM</div>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-            </div>
+            {alerts.length === 0 ? (
+              <p className="text-xs text-slate-400 py-8 text-center">
+                No incidents raised yet. Alerts appear here automatically when a leak is confirmed.
+              </p>
+            ) : (
+              alerts.slice(0, 4).map((a) => {
+                const sev = severityStyle(a.impact?.severity);
+                return (
+                  <div
+                    key={a.alert_id}
+                    onClick={() => onNavigateTab("alerts")}
+                    className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition cursor-pointer border border-transparent hover:border-slate-100"
+                  >
+                    <div className="flex items-start space-x-3 min-w-0">
+                      <span className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${sev.dot}`} />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-800 truncate">
+                          {a.alert_id} · {a.zone} · {formatRate(a.peak_leak_rate_lpm)}
+                        </div>
+                        <div className="text-[11px] text-slate-400">{formatTimestamp(a.start_ts)}</div>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </div>

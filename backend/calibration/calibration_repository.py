@@ -19,16 +19,20 @@ class CalibrationRepository:
             except Exception as e:
                 logger.error(f"Failed to load calibration data from {self.filepath}: {e}")
         
-        # Default zero-leak baseline calibration values
+        # Defaults mirror firmware/src/config.h. They must match what is
+        # actually flashed — K-factors live in the firmware and are applied
+        # on-device, so a mismatch here would misreport the rig's real
+        # conversion constants.
         return {
-            "flow1_k": 445.2,
-            "flow2_k": 451.8,
-            "flow3_k": 447.1,
+            "flow1_k": 456.0,
+            "flow2_k": 448.0,
+            "flow3_k": 452.0,
             "bias_lpm": 0.02,
             "sigma_lpm": 0.03,
             "ina219_no_load_ma": 420.0,
             "ina219_load_slope": 2.5,
-            "calibrated_at": 1754131200
+            "calibrated_at": None,
+            "source": "firmware defaults (not yet field-calibrated)"
         }
 
     def save_calibration(self, calibration_dict: dict):

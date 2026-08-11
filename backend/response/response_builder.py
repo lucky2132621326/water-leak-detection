@@ -39,16 +39,30 @@ def _format_time_window(alarm_onset_ts, ts):
 def _build_evidence_text(pipeline_result):
     residual = pipeline_result["residual"]
     active_methods = pipeline_result["fusion"]["active_methods"]
-    pressure = pipeline_result["pressure"]
+    detectors = {d["method"]: d for d in pipeline_result["detectors"]}
 
     parts = [f"flow residual {residual:+.2f} L/min ({'above' if residual > 0 else 'at/below'} baseline)"]
-    if pressure["pressure_bar"] is not None:
-        source_note = "estimated" if pressure["source"] == "estimated" else "logged"
-        parts.append(f"pressure ~{pressure['pressure_bar']} bar ({source_note})")
+
+    # Acoustic evidence is quoted as a RATIO to this rig's own quiet baseline.
+    # An absolute band energy would be meaningless to a reader and would vary
+    # with pump duty and mounting; the ratio is the thing that actually means
+    # "louder than it should be".
+    acoustic = detectors.get("acoustic") or {}
+    if acoustic.get("active") and acoustic.get("ratio") is not None:
+        parts.append(f"pipe noise {acoustic['ratio']:.2f}x baseline in 50-150 Hz")
+
+    current = detectors.get("current_signature") or {}
+    if current.get("residual_ma"):
+        parts.append(f"pump current {current['residual_ma']:+.0f} mA vs model")
+
     if active_methods:
         parts.append(f"confirmed by {', '.join(active_methods)}")
     else:
         parts.append("no detector currently in alarm")
+
+    if pipeline_result["fusion"].get("suppressed_as_implausible"):
+        parts.append("INSTRUMENT FAULT — leak alarm withheld: "
+                     + pipeline_result["fusion"]["suppression_reason"])
 
     return "; ".join(parts)
 
@@ -68,8 +82,19 @@ def build_response(pipeline_result, zone_names=None):
         "likelihood_score": likelihood_score,
         "residual_lpm": pipeline_result["residual"],
         "active_methods": fusion["active_methods"],
-        "pressure_bar": pipeline_result["pressure"]["pressure_bar"],
+        "acoustic_ratio": (next((d for d in pipeline_result["detectors"] if d["method"] == "acoustic"), {}) or {}).get("ratio"),
     }
+
+    plausibility = pipeline_result.get("plausibility") or {}
+    # A withheld alarm is still something the operator must act on — a meter has
+    # almost certainly failed. Reporting it as an instrument fault keeps the
+    # suppression visible instead of turning a broken sensor into silence.
+    sensor_fault = {
+        "is_fault": True,
+        "hypothesis": plausibility.get("fault_hypothesis"),
+        "detail": plausibility.get("reason"),
+        "contradicting_channels": plausibility.get("contradicting", []),
+    } if fusion.get("suppressed_as_implausible") else None
 
     is_reportable = pipeline_result["state"]["is_confirmed"]
     work_order = generate_work_order_summary(evidence_for_summary) if is_reportable else None
@@ -93,11 +118,12 @@ def build_response(pipeline_result, zone_names=None):
             "estimated_false_positive_rate": false_positive_rate
         },
         "work_order_summary": work_order,
+        "sensor_fault": sensor_fault,
         "detectors": detectors_by_method,
         "fusion": {
             "fused_confidence": round(fusion["fused_score"], 2),
             "is_alarm": is_reportable,
             "severity": tier
         },
-        "pressure": pipeline_result["pressure"],
+        "water_c": pipeline_result.get("water_c"),
     }

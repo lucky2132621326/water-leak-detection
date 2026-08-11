@@ -30,17 +30,11 @@ class ConfigLoader:
             self._config = self.get_defaults()
 
     def get_defaults(self):
+        # MQTT only. `database` and `detector` blocks were removed from
+        # settings.yaml because nothing read them and their values contradicted
+        # the ones actually in force — see the notes in settings.yaml.
         return {
             "mqtt": {"host": "localhost", "port": 1883, "topic": "rig/telemetry", "cmd_topic": "rig/cmd"},
-            "database": {"uri": "mongodb://localhost:27017", "name": "water_leak_detection"},
-            "detector": {
-                "sigma_multiplier": 3.0,
-                "persistence_seconds": 10,
-                "bias_lpm": 0.10,
-                "current_drop_threshold_ma": 20.0,
-                "cusum_slack_k": 0.15,
-                "cusum_decision_h": 3.0
-            }
         }
 
     def get(self, key_path: str, default=None):

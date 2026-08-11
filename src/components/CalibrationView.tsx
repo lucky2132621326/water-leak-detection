@@ -1,17 +1,54 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Sliders, Save, RefreshCw, CheckCircle2, ShieldAlert } from "lucide-react";
 
 export const CalibrationView: React.FC = () => {
-  const [k1, setK1] = useState(445.2);
-  const [k2, setK2] = useState(451.8);
-  const [k3, setK3] = useState(447.1);
+  const [k1, setK1] = useState(456.0);
+  const [k2, setK2] = useState(448.0);
+  const [k3, setK3] = useState(452.0);
   const [bias, setBias] = useState(0.02);
   const [sigma, setSigma] = useState(0.03);
   const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load the persisted calibration record rather than showing constants.
+  useEffect(() => {
+    fetch("/api/calibration")
+      .then((r) => r.json())
+      .then((d) => {
+        if (typeof d?.flow1_k === "number") setK1(d.flow1_k);
+        if (typeof d?.flow2_k === "number") setK2(d.flow2_k);
+        if (typeof d?.flow3_k === "number") setK3(d.flow3_k);
+        if (typeof d?.bias_lpm === "number") setBias(d.bias_lpm);
+        if (typeof d?.sigma_lpm === "number") setSigma(d.sigma_lpm);
+        if (d?.note) setNote(d.note);
+      })
+      .catch(() => setError("Could not load stored calibration."));
+  }, []);
 
   const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setBusy(true);
+    setError(null);
+    fetch("/api/calibration", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        flow1_k: k1, flow2_k: k2, flow3_k: k3, bias_lpm: bias, sigma_lpm: sigma,
+      }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.success) {
+          setSaved(true);
+          if (d.note) setNote(d.note);
+          setTimeout(() => setSaved(false), 2500);
+        } else {
+          setError(d?.error ?? "Save failed.");
+        }
+      })
+      .catch(() => setError("Backend unreachable — calibration not saved."))
+      .finally(() => setBusy(false));
   };
 
   return (
@@ -31,16 +68,25 @@ export const CalibrationView: React.FC = () => {
             onClick={handleSave}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-600/20 flex items-center space-x-2 transition"
           >
-            {saved ? <CheckCircle2 className="w-4 h-4 text-emerald-300" /> : <Save className="w-4 h-4" />}
-            <span>{saved ? "Saved to Memory!" : "Save Calibration"}</span>
+            {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : saved ? <CheckCircle2 className="w-4 h-4 text-emerald-300" /> : <Save className="w-4 h-4" />}
+            <span>{busy ? "Saving…" : saved ? "Saved" : "Save Calibration"}</span>
           </button>
         </div>
+
+        {error && (
+          <p className="mb-4 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5 font-medium">{error}</p>
+        )}
+        {note && (
+          <p className="mb-5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 leading-relaxed">
+            <strong>Note:</strong> {note}
+          </p>
+        )}
 
         {/* Pulse Factors Matrix */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
           <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-5 space-y-3">
             <div className="text-xs font-bold text-slate-700">Flow 1 Meter (Qin - Inlet)</div>
-            <div className="text-[11px] text-slate-400">YF-S201 Interrupt GPIO 18</div>
+            <div className="text-[11px] text-slate-400">YF-S201 Interrupt GPIO 34</div>
             <div>
               <label className="text-xs text-slate-500 block mb-1 font-medium">Pulses / Liter Factor (K1)</label>
               <input
@@ -55,7 +101,7 @@ export const CalibrationView: React.FC = () => {
 
           <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-5 space-y-3">
             <div className="text-xs font-bold text-slate-700">Flow 2 Meter (Qout - Outlet)</div>
-            <div className="text-[11px] text-slate-400">YF-S201 Interrupt GPIO 19</div>
+            <div className="text-[11px] text-slate-400">YF-S201 Interrupt GPIO 35</div>
             <div>
               <label className="text-xs text-slate-500 block mb-1 font-medium">Pulses / Liter Factor (K2)</label>
               <input
@@ -70,7 +116,7 @@ export const CalibrationView: React.FC = () => {
 
           <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-5 space-y-3">
             <div className="text-xs font-bold text-slate-700">Flow 3 Meter (Qbranch - Side)</div>
-            <div className="text-[11px] text-slate-400">YF-S201 Interrupt GPIO 21</div>
+            <div className="text-[11px] text-slate-400">YF-S201 Interrupt GPIO 32</div>
             <div>
               <label className="text-xs text-slate-500 block mb-1 font-medium">Pulses / Liter Factor (K3)</label>
               <input

@@ -102,10 +102,10 @@ export const LocalizationView: React.FC = () => {
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2 text-xs">
                 <div className="font-bold text-slate-900 flex items-center space-x-2">
                   <Wrench className="w-4 h-4 text-blue-600" />
-                  <span>Suggested Isolation Action</span>
+                  <span>Isolation Point (Diagnostic)</span>
                 </div>
                 <p className="text-slate-600 text-[11px] leading-relaxed">
-                  Actuate solenoid valve <span className="text-slate-900 font-mono font-extrabold bg-slate-200/80 px-1.5 py-0.5 rounded">{locData.isolation_valve_suggested}</span> to isolate Branch A and prevent pressure loss in main trunk.
+                  Branch A can be isolated at <span className="text-slate-900 font-mono font-extrabold bg-slate-200/80 px-1.5 py-0.5 rounded">{locData.isolation_valve_suggested}</span> if a crew confirms the leak in the field. This is diagnostic guidance only — the system does not issue valve or pump control instructions.
                 </p>
               </div>
             </div>

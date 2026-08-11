@@ -1,217 +1,330 @@
-import React, { useState } from "react";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
-import { Play, Square, FlaskConical, Tag, CheckCircle2, FileSpreadsheet } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ReferenceArea
+} from "recharts";
+import { Play, Square, FlaskConical, Tag, CheckCircle2, Loader2, AlertTriangle, Clock } from "lucide-react";
+import type { ReplayRun } from "../types";
+import { formatTimestamp, formatDuration } from "../lib/impact";
 
+interface GroundTruthEvent {
+  start_ts: number; stop_ts: number | null; location_node: string;
+  severity_lpm: number; is_ground_truth: boolean; notes: string;
+}
+interface ExperimentStatus {
+  run_active: boolean;
+  run: { run_id: string; operator: string; location: string; leak_size_lpm: number;
+         pump_mode: string; notes: string; start_ts: number; elapsed_sec: number; status: string } | null;
+  leak_open: boolean;
+  leak_event: { start_ts: number; elapsed_sec: number; location_node: string; severity_lpm: number } | null;
+  ground_truth_events: GroundTruthEvent[];
+}
+
+/**
+ * Experiment Control — digital ground-truth logging.
+ *
+ * Every control here writes to MongoDB through /api/experiments/*. Starting a
+ * run stamps its run_id onto incoming live telemetry, and the ground-truth
+ * buttons record machine timestamps at the moment the operator acts — which is
+ * what turns detection latency into a measurement instead of a recollection.
+ */
 export const ExperimentsView: React.FC = () => {
-  const [selectedRun, setSelectedRun] = useState("RUN_001");
-  const [isLoggingLeak, setIsLoggingLeak] = useState(false);
-  const [operatorNotes, setOperatorNotes] = useState("Manual solenoid valve leak test with calibrated 0.50 LPM orifice");
-  const [logMessage, setLogMessage] = useState<string | null>(null);
+  const [status, setStatus] = useState<ExperimentStatus | null>(null);
+  const [runs, setRuns] = useState<ReplayRun[]>([]);
+  const [selectedRun, setSelectedRun] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
-  const runs = [
-    { run_id: "RUN_001", operator: "Manoj", date: "2026-08-03", leak_size_lpm: 0.50, location: "Branch_A", pump_mode: "Constant 12V", notes: "Micro-leak sensitivity baseline test" },
-    { run_id: "RUN_002", operator: "Member_B", date: "2026-08-03", leak_size_lpm: 1.25, location: "Branch_A", pump_mode: "Constant 12V", notes: "Standard branch A solenoid opening" },
-    { run_id: "RUN_003", operator: "Member_C", date: "2026-08-03", leak_size_lpm: 2.50, location: "Main_Trunk", pump_mode: "Variable Load", notes: "High severity main pipeline rupture" },
-    { run_id: "RUN_004", operator: "Member_D", date: "2026-08-03", leak_size_lpm: 0.30, location: "Micro_Joint", pump_mode: "Constant 12V", notes: "Minimum detectable flow threshold test" },
-    { run_id: "RUN_005", operator: "Manoj", date: "2026-08-03", leak_size_lpm: 1.80, location: "Branch_B", pump_mode: "Constant 12V", notes: "Branch B isolation and side loop test" },
-  ];
+  // New-run form
+  const [runId, setRunId] = useState("");
+  const [operator, setOperator] = useState("");
+  const [location, setLocation] = useState("Branch_A");
+  const [leakSize, setLeakSize] = useState(0.5);
+  const [notes, setNotes] = useState("");
 
-  const currentMetadata = runs.find((r) => r.run_id === selectedRun) || runs[0];
+  const refresh = useCallback(() => {
+    fetch("/api/experiments/status").then((r) => r.json()).then(setStatus).catch(() => undefined);
+    fetch("/api/benchmark/runs").then((r) => r.json()).then((d) => {
+      const rows: ReplayRun[] = Array.isArray(d) ? d : [];
+      setRuns(rows);
+      setSelectedRun((cur) => cur ?? rows[0]?.run_id ?? null);
+    }).catch(() => undefined);
+  }, []);
 
-  // Comparison chart data (Actual vs Estimated Leak Rate over time)
-  const comparisonData = Array.from({ length: 60 }, (_, i) => {
-    const timeStr = `14:${Math.floor(i / 60).toString().padStart(2, '0')}:${(i % 60).toString().padStart(2, '0')}`;
-    const isLeak = i >= 20 && i <= 45;
-    const actualLeak = isLeak ? currentMetadata.leak_size_lpm : 0.0;
-    const estimatedLeak = isLeak ? Math.max(0, actualLeak + (Math.sin(i) * 0.04) - 0.02) : (i > 45 && i < 48 ? 0.05 : 0.0);
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 2000);
+    return () => clearInterval(t);
+  }, [refresh]);
 
-    return {
-      time: timeStr,
-      ActualLeak: Number(actualLeak.toFixed(2)),
-      EstimatedLeak: Number(estimatedLeak.toFixed(2)),
-      Residual: Number((actualLeak > 0 ? actualLeak + 0.03 : 0.02).toFixed(2))
-    };
-  });
-
-  const handleStartLeak = () => {
-    setIsLoggingLeak(true);
-    setLogMessage(`[Ground Truth] Logged Leak START timestamp in MongoDB (start_ts = ${Math.floor(Date.now()/1000)})`);
-    setTimeout(() => setLogMessage(null), 4000);
+  const post = (url: string, body?: any) => {
+    setBusy(true);
+    return fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.error) setMessage({ kind: "err", text: d.error });
+        else setMessage({ kind: "ok", text: describe(url, d) });
+        refresh();
+        return d;
+      })
+      .catch(() => setMessage({ kind: "err", text: "Backend unreachable." }))
+      .finally(() => setBusy(false));
   };
 
-  const handleStopLeak = () => {
-    setIsLoggingLeak(false);
-    setLogMessage(`[Ground Truth] Logged Leak STOP timestamp in MongoDB (stop_ts = ${Math.floor(Date.now()/1000)})`);
-    setTimeout(() => setLogMessage(null), 4000);
+  const describe = (url: string, d: any) => {
+    if (url.endsWith("/start") && d.run_id) return `Run ${d.run_id} started — live telemetry is now being tagged with this run.`;
+    if (url.endsWith("/stop") && d.run_id) return `Run ${d.run_id} completed after ${d.duration_sec}s.`;
+    if (url.includes("ground-truth/start")) return `Ground truth recorded: leak OPENED at ${formatTimestamp(d.start_ts)}.`;
+    if (url.includes("ground-truth/stop")) return `Ground truth recorded: leak CLOSED after ${d.duration_sec}s.`;
+    return "Done.";
   };
+
+  const meta = runs.find((r) => r.run_id === selectedRun);
+  const active = status?.run_active ? status.run : null;
 
   return (
     <div className="space-y-6">
-      {/* Banner */}
-      <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2 tracking-tight">
-              <FlaskConical className="w-6 h-6 text-purple-600" />
-              <span>Phase 2: Ground Truth Experiments & Benchmark Logging</span>
-            </h2>
-            <p className="text-xs text-slate-500 mt-1">
-              Direct digital ground truth timestamp recording to MongoDB (`leak_events` collection). Eliminates manual paper notes.
-            </p>
-          </div>
-
-          {/* Experiment Selector */}
-          <div className="flex items-center space-x-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
-            <span className="text-xs text-slate-500 font-bold px-2">Select Run:</span>
-            {runs.map((r) => (
-              <button
-                key={r.run_id}
-                onClick={() => setSelectedRun(r.run_id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition ${
-                  selectedRun === r.run_id
-                    ? "bg-purple-600 text-white shadow-sm"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
-                }`}
-              >
-                {r.run_id}
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* Header */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs">
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center space-x-2">
+          <FlaskConical className="w-6 h-6 text-blue-600" />
+          <span>Ground Truth Experiments & Benchmark Logging</span>
+        </h2>
+        <p className="text-xs text-slate-500 mt-1 max-w-3xl">
+          Records what actually happened, with machine timestamps, straight to MongoDB
+          (<code className="font-mono">experiment_runs</code> and <code className="font-mono">leak_events</code>).
+          Detection accuracy is scored against these records — not against the detector's own output.
+        </p>
+        {message && (
+          <p className={`mt-3 text-xs font-medium rounded-xl px-3.5 py-2.5 border ${
+            message.kind === "ok"
+              ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+              : "text-rose-700 bg-rose-50 border-rose-200"
+          }`}>
+            {message.text}
+          </p>
+        )}
       </div>
 
-      {logMessage && (
-        <div className="bg-purple-50 border border-purple-200 text-purple-800 p-3.5 rounded-2xl text-xs font-mono flex items-center space-x-2 shadow-2xs">
-          <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" />
-          <span>{logMessage}</span>
-        </div>
-      )}
-
-      {/* Ground Truth Digital Logger Panel & Metadata */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Metadata Panel */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
-          <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-            <Tag className="w-4 h-4 text-purple-600" />
-            <span>Experiment Run Metadata ({selectedRun})</span>
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+        {/* Run control */}
+        <div className="xl:col-span-5 bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs">
+          <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center space-x-2">
+            <Tag className="w-4 h-4 text-slate-500" />
+            <span>{active ? "Active Run" : "Start a New Run"}</span>
           </h3>
 
-          <div className="space-y-3 text-xs">
-            <div className="flex justify-between p-3 bg-slate-50 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 font-medium">Operator:</span>
-              <span className="font-bold text-slate-900">{currentMetadata.operator}</span>
-            </div>
-            <div className="flex justify-between p-3 bg-slate-50 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 font-medium">Leak Location:</span>
-              <span className="font-bold text-purple-600 font-mono">{currentMetadata.location}</span>
-            </div>
-            <div className="flex justify-between p-3 bg-slate-50 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 font-medium">Calibrated Leak Size:</span>
-              <span className="font-bold text-rose-600 font-mono">{currentMetadata.leak_size_lpm} LPM</span>
-            </div>
-            <div className="flex justify-between p-3 bg-slate-50 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 font-medium">Pump Operating Mode:</span>
-              <span className="font-bold text-slate-900">{currentMetadata.pump_mode}</span>
-            </div>
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/60">
-              <div className="text-slate-500 font-medium mb-1">Notes:</div>
-              <div className="text-slate-700 italic">{currentMetadata.notes}</div>
-            </div>
-          </div>
-        </div>
+          {active ? (
+            <div className="space-y-3">
+              <Row label="Run ID" value={active.run_id} mono />
+              <Row label="Operator" value={active.operator} />
+              <Row label="Leak Location" value={active.location} />
+              <Row label="Target Leak Size" value={`${active.leak_size_lpm} L/min`} />
+              <Row label="Started" value={formatTimestamp(active.start_ts)} />
+              <Row label="Elapsed" value={formatDuration(active.elapsed_sec)} />
+              {active.notes && <Row label="Notes" value={active.notes} />}
 
-        {/* Digital Ground Truth Logger Controls */}
-        <div className="lg:col-span-2 bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-5">
-          <h3 className="text-sm font-bold text-slate-900 flex items-center justify-between">
-            <span className="flex items-center space-x-2">
-              <Square className="w-4 h-4 text-rose-600" />
-              <span>Digital Ground Truth Logger (MongoDB Integration)</span>
-            </span>
-            <span className={`px-3 py-1 rounded-full text-[10px] font-bold font-mono ${
-              isLoggingLeak ? "bg-rose-100 text-rose-700 border border-rose-200 animate-pulse" : "bg-slate-100 text-slate-600"
-            }`}>
-              {isLoggingLeak ? "RECORDING GROUND TRUTH" : "READY"}
-            </span>
-          </h3>
-
-          <div className="flex flex-wrap items-center gap-4">
-            {!isLoggingLeak ? (
               <button
-                onClick={handleStartLeak}
-                className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center space-x-2 shadow-md shadow-rose-600/20 transition"
+                onClick={() => post("/api/experiments/stop")}
+                disabled={busy}
+                className="w-full mt-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-bold rounded-xl flex items-center justify-center space-x-2 transition"
               >
-                <Play className="w-4 h-4 fill-current" />
-                <span>Start Ground Truth Leak Event</span>
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                <span>Stop Run</span>
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3.5">
+              <Field label="Run ID (blank = auto)">
+                <input value={runId} onChange={(e) => setRunId(e.target.value)}
+                       placeholder="RUN_20260810_1400" className={inputClass} />
+              </Field>
+              <Field label="Operator">
+                <input value={operator} onChange={(e) => setOperator(e.target.value)}
+                       placeholder="your name" className={inputClass} />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Leak Location">
+                  <select value={location} onChange={(e) => setLocation(e.target.value)} className={inputClass}>
+                    <option>Branch_A</option><option>Branch_B</option><option>Main_Trunk</option>
+                  </select>
+                </Field>
+                <Field label="Calibrated Leak (L/min)">
+                  <input type="number" step={0.05} min={0} value={leakSize}
+                         onChange={(e) => setLeakSize(Number(e.target.value))} className={inputClass} />
+                </Field>
+              </div>
+              <Field label="Notes">
+                <input value={notes} onChange={(e) => setNotes(e.target.value)}
+                       placeholder="e.g. micro-leak sensitivity baseline" className={inputClass} />
+              </Field>
+
+              <button
+                onClick={() => post("/api/experiments/start", {
+                  run_id: runId.trim() || undefined, operator: operator.trim() || "unknown",
+                  location, leak_size_lpm: leakSize, notes: notes.trim(),
+                })}
+                disabled={busy}
+                className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-bold rounded-xl flex items-center justify-center space-x-2 transition"
+              >
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                <span>Start Run</span>
+              </button>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Starting a run tags incoming live telemetry with its ID so the session can be scored later.
+                In Mock Data Mode the generated stream is tagged with the run, so both ground truth and telemetry are recorded.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Ground truth logger */}
+        <div className="xl:col-span-7 bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-slate-900">Digital Ground Truth Logger</h3>
+            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold border ${
+              !active ? "bg-slate-100 text-slate-500 border-slate-200"
+                : status?.leak_open ? "bg-rose-100 text-rose-700 border-rose-200 animate-pulse"
+                : "bg-emerald-100 text-emerald-700 border-emerald-200"
+            }`}>
+              {!active ? "NO ACTIVE RUN" : status?.leak_open ? "LEAK OPEN" : "READY"}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {status?.leak_open ? (
+              <button
+                onClick={() => post("/api/experiments/ground-truth/stop")}
+                disabled={busy}
+                className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-bold rounded-xl flex items-center space-x-2 transition"
+              >
+                <Square className="w-4 h-4" />
+                <span>Stop Ground Truth Leak Event</span>
               </button>
             ) : (
               <button
-                onClick={handleStopLeak}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center space-x-2 shadow-md shadow-emerald-600/20 transition"
+                onClick={() => post("/api/experiments/ground-truth/start")}
+                disabled={busy || !active}
+                className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl flex items-center space-x-2 transition"
               >
-                <Square className="w-4 h-4 fill-current" />
-                <span>Stop Ground Truth Leak Event</span>
+                <Play className="w-4 h-4" />
+                <span>Start Ground Truth Leak Event</span>
               </button>
             )}
-
-            <div className="flex-1 min-w-[200px]">
-              <input
-                type="text"
-                value={operatorNotes}
-                onChange={(e) => setOperatorNotes(e.target.value)}
-                placeholder="Operator test notes..."
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:outline-none focus:border-purple-500 focus:bg-white transition"
-              />
-            </div>
+            {status?.leak_open && status.leak_event && (
+              <span className="text-xs font-bold text-rose-600 flex items-center space-x-1.5">
+                <Clock className="w-3.5 h-3.5" />
+                <span>open for {formatDuration(status.leak_event.elapsed_sec)}</span>
+              </span>
+            )}
           </div>
 
-          {/* Timeline Visualizer */}
-          <div className="pt-3 border-t border-slate-100">
-            <div className="text-xs font-bold text-slate-500 mb-3">Experiment Timeline Phases</div>
-            <div className="grid grid-cols-4 gap-3 text-center text-xs">
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/70">
-                <div className="text-[10px] text-slate-400 font-mono font-medium">00:00 - 00:20</div>
-                <div className="font-bold text-slate-700 mt-0.5">Baseline (0 LPM)</div>
+          <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
+            Press at the same instant you turn the valve. Hold the leak for a{" "}
+            <strong className="text-slate-600">predetermined duration</strong> — closing it because the
+            system detected would make recall 100% by construction and measure nothing.
+          </p>
+
+          {/* Recorded events */}
+          <div className="mt-5 pt-5 border-t border-slate-100">
+            <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-3">
+              Recorded Ground Truth {active ? `— ${active.run_id}` : ""}
+            </h4>
+            {(status?.ground_truth_events?.length ?? 0) === 0 ? (
+              <p className="text-xs text-slate-400 py-4 text-center border border-dashed border-slate-200 rounded-xl">
+                {active ? "No leak events logged yet for this run." : "Start a run to begin logging."}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {status!.ground_truth_events.map((e, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs bg-slate-50 border border-slate-200/70 rounded-xl px-3.5 py-2.5">
+                    <div className="flex items-center space-x-2.5 min-w-0">
+                      <CheckCircle2 className={`w-4 h-4 shrink-0 ${e.stop_ts ? "text-emerald-600" : "text-amber-500"}`} />
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-800">
+                          {e.location_node} · {e.severity_lpm} L/min
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          {formatTimestamp(e.start_ts)} → {e.stop_ts ? formatTimestamp(e.stop_ts) : "open"}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="font-mono font-bold text-slate-600 shrink-0">
+                      {e.stop_ts ? formatDuration(e.stop_ts - e.start_ts) : "—"}
+                    </span>
+                  </div>
+                ))}
               </div>
-              <div className="bg-rose-50 p-3 rounded-xl border border-rose-200">
-                <div className="text-[10px] text-rose-500 font-mono font-medium">00:20</div>
-                <div className="font-bold text-rose-700 mt-0.5">Leak Injected</div>
-              </div>
-              <div className="bg-blue-50 p-3 rounded-xl border border-blue-200">
-                <div className="text-[10px] text-blue-500 font-mono font-medium">00:22.1</div>
-                <div className="font-bold text-blue-700 mt-0.5">Detector Alarm</div>
-              </div>
-              <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-200">
-                <div className="text-[10px] text-emerald-500 font-mono font-medium">00:45</div>
-                <div className="font-bold text-emerald-700 mt-0.5">Valve Closed</div>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Ground Truth vs Detection Chart */}
-      <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs">
-        <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center justify-between">
-          <span className="flex items-center space-x-2">
-            <FileSpreadsheet className="w-4 h-4 text-purple-600" />
-            <span>Ground Truth vs Estimated Leak Rate ({selectedRun})</span>
-          </span>
-          <span className="text-xs text-slate-400 font-mono font-medium">Actual vs Estimated (L/min)</span>
-        </h3>
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={comparisonData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
-              <XAxis dataKey="time" stroke="#94A3B8" tick={{ fontSize: 11 }} />
-              <YAxis stroke="#94A3B8" domain={[0, 3.0]} tick={{ fontSize: 11 }} />
-              <Tooltip contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderRadius: '12px', color: '#0F172A', fontSize: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)' }} />
-              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-              <Line type="stepAfter" dataKey="ActualLeak" name="Actual Ground Truth Leak (LPM)" stroke="#E11D48" strokeWidth={2.5} dot={false} />
-              <Line type="monotone" dataKey="EstimatedLeak" name="Detector Estimated Leak (LPM)" stroke="#9333EA" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+      {/* Stored runs */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs">
+        <h3 className="text-sm font-bold text-slate-900 mb-4">Stored Runs</h3>
+        {runs.length === 0 ? (
+          <p className="text-xs text-slate-400 py-8 text-center border border-dashed border-slate-200 rounded-xl">
+            No runs recorded yet. Start one above, or score a scenario from Mock Scenarios.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              {runs.map((r) => (
+                <button
+                  key={r.run_id}
+                  onClick={() => setSelectedRun(r.run_id)}
+                  className={`text-left rounded-2xl border p-4 transition ${
+                    selectedRun === r.run_id
+                      ? "border-blue-400 bg-blue-50/60 shadow-2xs"
+                      : "border-slate-200 bg-white hover:border-blue-200"
+                  }`}
+                >
+                  <div className="text-sm font-extrabold text-slate-800 font-mono truncate">{r.run_id}</div>
+                  <div className="text-[11px] text-slate-500 mt-1">{r.date} · {r.operator}</div>
+                  <div className="text-[11px] text-slate-400">{r.location} · {r.leak_size_lpm} L/min</div>
+                </button>
+              ))}
+            </div>
+
+            {meta && (
+              <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                <Row label="Operator" value={meta.operator} />
+                <Row label="Location" value={meta.location} />
+                <Row label="Calibrated Leak" value={`${meta.leak_size_lpm} L/min`} />
+                <Row label="Duration" value={meta.duration_sec ? `${meta.duration_sec}s` : "—"} />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 flex items-start space-x-2.5">
+        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+        <p className="text-xs text-amber-800 leading-relaxed">
+          Run clean sessions too — with the valve never opened. Without them there is nothing to
+          measure false alarms against, and precision cannot be established.
+        </p>
       </div>
     </div>
   );
 };
+
+const inputClass =
+  "w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/40";
+
+const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+  <div>
+    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">{label}</label>
+    {children}
+  </div>
+);
+
+const Row: React.FC<{ label: string; value: string; mono?: boolean }> = ({ label, value, mono }) => (
+  <div className="flex items-center justify-between bg-slate-50 border border-slate-200/70 rounded-xl px-3.5 py-2.5">
+    <span className="text-[11px] font-semibold text-slate-500">{label}</span>
+    <span className={`text-xs font-bold text-slate-800 ${mono ? "font-mono" : ""}`}>{value}</span>
+  </div>
+);

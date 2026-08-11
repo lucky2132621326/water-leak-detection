@@ -91,8 +91,11 @@ class TestIngestion(AlertServiceTestCase):
 class TestLifecycle(AlertServiceTestCase):
     def setUp(self):
         super().setUp()
+        # Deliberately "live": savings is an operational KPI and excludes mock
+        # incidents by default, so a mock-sourced alert would correctly credit
+        # nothing and these assertions would be testing the wrong thing.
         for ts in range(100, 105):
-            self.svc.ingest(make_response(ts, residual=1.0))
+            self.svc.ingest(make_response(ts, residual=1.0), source="live")
         self.alert_id = self.svc.query()[0]["alert_id"]
 
     def test_resolve_credits_savings(self):
@@ -128,16 +131,58 @@ class TestLifecycle(AlertServiceTestCase):
 
     def test_precision_reflects_dispositions(self):
         self.svc.resolve(self.alert_id)
-        self.svc.ingest(make_response(10_000, residual=1.0))
+        self.svc.ingest(make_response(10_000, residual=1.0), source="live")
         self.svc.mark_false_positive(self.svc.query(status="ACTIVE")[0]["alert_id"])
         self.assertEqual(self.svc.savings()["detection_precision"], 0.5)
 
-    def test_replay_after_disposition_does_not_undo_it(self):
+    def test_reingest_after_disposition_does_not_undo_it(self):
         self.svc.resolve(self.alert_id)
         for ts in range(100, 105):
-            self.svc.ingest(make_response(ts, residual=1.0))
+            self.svc.ingest(make_response(ts, residual=1.0), source="live")
         self.assertEqual(self.svc.get(self.alert_id)["status"], "RESOLVED")
         self.assertEqual(self.svc.counts()["total"], 1)
+
+
+class TestMockExclusion(AlertServiceTestCase):
+    """Synthetic incidents must not inflate operational KPIs.
+
+    Crediting water "saved" on a leak that never physically existed would make
+    the figure meaningless, so mock-sourced alerts are excluded by default and
+    only counted when explicitly asked for.
+    """
+
+    def setUp(self):
+        super().setUp()
+        for ts in range(100, 105):
+            self.svc.ingest(make_response(ts, residual=1.0), source="live")
+        for ts in range(5000, 5005):
+            self.svc.ingest(make_response(ts, residual=2.0), source="mock")
+        for a in self.svc.query():
+            self.svc.resolve(a["alert_id"])
+
+    def test_every_incident_in_the_store_is_counted(self):
+        """Live and mock now live in physically separate databases with one
+        AlertService instance each, so there is nothing to filter: a per-mode
+        store cannot contain the other mode's incidents. The old
+        `include_mock` filter would have returned nothing at all in mock mode.
+        """
+        s = self.svc.savings()
+        self.assertEqual(s["leaks_prevented"], 2)
+        # 1.0 + 2.0 L/min over the 30-day horizon.
+        self.assertAlmostEqual(s["water_saved_litres"], 129600.0, places=1)
+
+    def test_savings_declare_which_mode_produced_them(self):
+        # Mock savings are real arithmetic over synthetic leaks: fine as a
+        # demonstration, meaningless as an operational claim. The flag is what
+        # stops the UI presenting one as the other.
+        s = self.svc.savings()
+        self.assertEqual(s["mode"], "mock")
+        self.assertTrue(s["is_synthetic"])
+
+    def test_counts_are_scoped_to_this_mode(self):
+        counts = self.svc.counts()
+        self.assertEqual(counts["total"], 2)
+        self.assertEqual(counts["mode"], "mock")
 
 
 class TestQueries(AlertServiceTestCase):

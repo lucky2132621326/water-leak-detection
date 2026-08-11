@@ -22,6 +22,7 @@ import time
 from backend.config.config_loader import impact_loader
 from backend.impact.impact_service import ImpactService
 from backend.impact.water_loss import WaterLossCalculator
+from backend.mode import MODE_MOCK, get_active_mode, require_mode
 from backend.utils.logger import logger
 
 ALERT_STATUSES = ("ACTIVE", "RESOLVED", "FALSE_POSITIVE")
@@ -30,10 +31,17 @@ MINUTES_PER_DAY = 60 * 24
 
 
 class AlertService:
-    def __init__(self, db=None, impact_service: ImpactService = None, enable_persistence: bool = True):
+    def __init__(self, db=None, impact_service: ImpactService = None,
+                 enable_persistence: bool = True, mode: str = MODE_MOCK):
         """`enable_persistence=False` gives a pure in-memory service that never
         touches MongoDB — used by the test suite so it neither requires a running
-        database nor reads/writes real incident data."""
+        database nor reads/writes real incident data.
+
+        `mode` binds this instance to one data store. An instance never holds or
+        returns another mode's incidents, so there is no cross-mode filter to
+        apply (or forget) on any query below.
+        """
+        self.mode = require_mode(mode)
         self._lock = threading.RLock()
         self._alerts = []           # authoritative, newest-last
         self._next_seq = 1
@@ -92,7 +100,7 @@ class AlertService:
         is exactly the water entering the zone that never left it."""
         return max(0.0, float(response.get("residual") or 0.0))
 
-    def ingest(self, response: dict, source: str = "replay", run_id: str = None):
+    def ingest(self, response: dict, source: str = "mock", run_id: str = None):
         """Feed one shaped detection response in. Returns the affected alert, or
         None if the sample was not in alarm and no incident was open."""
         if not response:
@@ -120,8 +128,7 @@ class AlertService:
             if open_alert and (ts - open_alert["last_seen_ts"]) <= self.merge_gap_sec:
                 return self._update(open_alert, response, ts, rate)
 
-            # The replay player loops the same stored run continuously, so the
-            # same sample arrives again on every pass. Re-ingesting a timestamp
+            # A looping mock scenario re-emits the same timestamps on every pass. Re-ingesting a timestamp
             # already covered by an incident updates that incident instead of
             # spawning a duplicate, so one stored leak window yields one alert
             # however many times it is replayed. Matching on window overlap
@@ -129,9 +136,8 @@ class AlertService:
             # carries across loops, so the confirmed onset drifts slightly.
             existing = self._find_covering(source, run_id, ts)
             if existing:
-                # Re-open the detection window so the rest of this replay pass
-                # merges into the same incident instead of spawning one alert
-                # per sample. The operator's status (RESOLVED / FALSE_POSITIVE)
+                # Re-open the detection window so the rest of this pass merges
+                # into the same incident instead of spawning one alert per sample. The operator's status (RESOLVED / FALSE_POSITIVE)
                 # is untouched — replaying evidence never undoes a disposition.
                 existing["is_open"] = True
                 return self._update(existing, response, ts, rate)
@@ -162,7 +168,10 @@ class AlertService:
         alert = {
             "alert_id": f"LEAK-{seq:04d}",
             "seq": seq,
+            # Redundant with the database this lives in, and deliberately so: an
+            # exported or hand-copied record still states what it is.
             "source": source,
+            "mode": self.mode,
             "run_id": run_id,
             "status": "ACTIVE",
             "is_open": True,
@@ -315,10 +324,14 @@ class AlertService:
         rows.sort(key=lambda a: a["start_ts"], reverse=True)
         return rows[: int(limit)]
 
-    def counts(self):
+    def counts(self, include_mock: bool = True):
+        # `include_mock` is retained for API compatibility but no longer filters:
+        # this instance only ever holds its own mode's incidents. Filtering by
+        # source inside a per-mode store would return nothing in mock mode.
         with self._lock:
             rows = list(self._alerts)
         return {
+            "mode": self.mode,
             "total": len(rows),
             "active": sum(1 for a in rows if a["status"] == "ACTIVE"),
             "resolved": sum(1 for a in rows if a["status"] == "RESOLVED"),
@@ -331,18 +344,31 @@ class AlertService:
             return sorted({a["zone"] for a in self._alerts if a.get("zone")})
 
     # --- savings ----------------------------------------------------------
-    def savings(self):
-        """Water Savings Counter — the utility-KPI view of repaired leaks."""
+    def savings(self, include_mock: bool = False):
+        """Water Savings Counter — the utility-KPI view of repaired leaks.
+
+        The figure is computed per mode and labelled with the mode that produced
+        it. Mock savings are real arithmetic over synthetic leaks: useful for
+        demonstrating the calculation, meaningless as an operational claim. The
+        old cross-mode `include_mock` filter is gone — the stores are separate
+        now, so there is nothing to filter, and `is_synthetic` says plainly which
+        kind of number this is rather than silently returning zero.
+        """
         with self._lock:
-            resolved = [a for a in self._alerts if a["status"] == "RESOLVED"]
-            false_positives = [a for a in self._alerts if a["status"] == "FALSE_POSITIVE"]
-            total_alerts = len(self._alerts)
+            rows = list(self._alerts)
+            resolved = [a for a in rows if a["status"] == "RESOLVED"]
+            false_positives = [a for a in rows if a["status"] == "FALSE_POSITIVE"]
+            total_alerts = len(rows)
 
         litres = sum(a.get("water_saved_litres", 0.0) for a in resolved)
         money = sum(a.get("cost_saved", 0.0) for a in resolved)
         dispositioned = len(resolved) + len(false_positives)
 
         return {
+            "mode": self.mode,
+            #: True means every leak behind this figure was synthetic. The UI must
+            #: say so rather than presenting it as an operational result.
+            "is_synthetic": self.mode == MODE_MOCK,
             "leaks_prevented": len(resolved),
             "water_saved_litres": round(litres, 1),
             "money_saved": round(money, 2),
@@ -351,6 +377,7 @@ class AlertService:
             "total_alerts": total_alerts,
             "detection_precision": round(len(resolved) / dispositioned, 3) if dispositioned else None,
             "horizon_days": self.prevented_horizon_days,
+            "includes_mock": self.mode == MODE_MOCK,
             "equivalents": self.impact.calculator.equivalents_for(litres),
             "basis": (
                 f"Savings credit each repaired leak with the water it would have lost over the "
@@ -381,13 +408,33 @@ class AlertService:
         return sorted(grouped.values(), key=lambda g: g["month"])[-int(buckets):]
 
 
-# Shared instance — the API, the replay player and the live ingestor must all
-# see the same incident list.
-_default_alert_service = None
+# --- per-mode instances -------------------------------------------------------
+#
+# One service per mode, NOT one shared instance. This class keeps an
+# authoritative in-memory list with MongoDB as a best-effort mirror, so routing
+# the database per mode is not enough on its own: a single shared instance would
+# still hold mock incidents in memory and serve them in live mode — exactly the
+# cross-contamination the split exists to prevent. The memory has to be split
+# alongside the storage.
+_alert_services = {}
+_services_lock = threading.RLock()
 
 
-def get_alert_service() -> AlertService:
-    global _default_alert_service
-    if _default_alert_service is None:
-        _default_alert_service = AlertService()
-    return _default_alert_service
+def get_alert_service(mode: str = None) -> AlertService:
+    """The alert service for `mode`, or for the active mode when unspecified."""
+    resolved = require_mode(mode or get_active_mode())
+    with _services_lock:
+        if resolved not in _alert_services:
+            from backend.repositories.db import get_db
+            try:
+                db = get_db(resolved)
+            except Exception:
+                db = None  # degrade to memory-only, as _collection() already does
+            _alert_services[resolved] = AlertService(db=db, mode=resolved)
+        return _alert_services[resolved]
+
+
+def reset_alert_services():
+    """Drop every cached service. Used by tests and by a hard mode reset."""
+    with _services_lock:
+        _alert_services.clear()

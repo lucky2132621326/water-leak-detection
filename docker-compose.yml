@@ -1,0 +1,54 @@
+# Portable development services.
+#
+# Replaces machine-specific installs (Homebrew MongoDB / Mosquitto) so every
+# developer runs the same versions with one command.
+#
+#   docker compose up -d                    # MongoDB only — all this project needs
+#   docker compose --profile live up -d     # + Mosquitto, for Live Mode
+#
+# Ports are published on the SAME defaults the application already assumes
+# (Mongo 27017, MQTT 1883), so no application code or config has to change:
+# backend/repositories/db.py falls back to mongodb://localhost:27017 when
+# MONGO_URI is unset, and that is exactly what this maps to.
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: wld-mongo
+    restart: unless-stopped
+    ports:
+      # Host-side 27017 is what makes the existing default URI keep working.
+      # If 27017 is already taken (e.g. a leftover Homebrew mongod), stop that
+      # service rather than remapping here — remapping would require every
+      # developer to set MONGO_URI.
+      - "27017:27017"
+    volumes:
+      # Named volume, not a bind mount: data survives `docker compose down`
+      # and stays out of the repo working tree. Removed only by `down -v`.
+      - mongo_data:/data/db
+    healthcheck:
+      # Lets `docker compose up -d --wait` block until Mongo actually accepts
+      # connections, instead of racing the first pymongo call.
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Optional — only needed for Live Mode (the ESP32 rig publishing telemetry).
+  # Replay Mode, the dashboard and the whole test suite do not use it, so it is
+  # behind a profile and stays stopped unless explicitly requested.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: wld-mosquitto
+    restart: unless-stopped
+    profiles: ["live"]
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+
+volumes:
+  mongo_data:
+  mosquitto_data:

@@ -28,6 +28,19 @@ Stores 1Hz sensor readings from physical rig or simulated MQTT publisher.
 
 ---
 
+> **`actuators.solenoid_state`** is the rig's ground-truth leak marker — `true`
+> means a leak was actually being injected at that sample. It is published by
+> the firmware on `rig/telemetry` and persisted so a live-captured run can be
+> scored against what physically happened, independently of what the detectors
+> concluded. Seeded replay runs set it over their injected leak window too, so
+> both data sources carry truth the same way. Documents written before this
+> field existed parse with it defaulted to `false`.
+
+> **`pressure_bar`** on a telemetry document is the line pressure at that
+> sample. Its provenance is carried alongside detection results as
+> `pressure.source`: `measured` (real transducer), `logged` (authored replay
+> data), or `estimated` (flow-derived fallback when no sensor reported).
+
 ### 2. `leak_events` (Collection)
 Ground truth records of injected leaks during experimental test runs.
 ```json

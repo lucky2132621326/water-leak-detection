@@ -3,11 +3,19 @@
 ## System Architecture
 
 ```text
-ESP32 Rig Sensors
-  (Flow1, Flow2, Flow3, INA219 Current, Solenoid Relays)
-        ↓ [MQTT Telemetry: rig/telemetry]
-   Mosquitto Broker
-        ↓
+TWO OPERATING MODES — identical after ingestion (docs/OPERATING_MODES.md)
+
+  Mock Data Mode                    Live Sensor Mode
+  MockTelemetrySource               ESP32 Rig Sensors
+  (declarative scenarios)           (Flow1/2/3, INA219, Pressure, Solenoid)
+        │                                   │ [MQTT: rig/telemetry]
+        │                            Mosquitto Broker
+        │                                   │
+        └───────────┬───────────────────────┘
+                    ↓
+          TelemetryIngestor  (ONE shared path)
+            validate → TelemetryDTO → DetectionPipeline
+                    ↓
  Python / Express Backend
   ├── Telemetry Collector & Validator
   ├── MongoDB Database Layer (mongodb://localhost:27017/water_leak_detection)

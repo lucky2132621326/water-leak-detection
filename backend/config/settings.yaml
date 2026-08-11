@@ -1,17 +1,25 @@
+# Infrastructure configuration.
+#
+# SCOPE: MQTT connection only. Detector tuning lives in thresholds.yaml and
+# database connection comes from the environment — see the notes below.
+#
+# This file previously also carried `database:` and `detector:` blocks that
+# nothing read. They silently disagreed with the values actually in force
+# (persistence 10 here vs 5 in thresholds.yaml; cusum h 3.0 here vs 5.0 there),
+# so editing them appeared to work and changed nothing. They have been removed
+# rather than reconciled, so there is exactly one source of truth per concern.
+
 mqtt:
   host: "localhost"
   port: 1883
   topic: "rig/telemetry"
   cmd_topic: "rig/cmd"
 
-database:
-  uri: "mongodb://localhost:27017"
-  name: "water_leak_detection"
-
-detector:
-  sigma_multiplier: 3.0
-  persistence_seconds: 10
-  bias_lpm: 0.10
-  current_drop_threshold_ma: 20.0
-  cusum_slack_k: 0.15
-  cusum_decision_h: 3.0
+# DATABASE — not configured here.
+#   backend/repositories/db.py reads the MONGO_URI and MONGO_DB_NAME environment
+#   variables, defaulting to mongodb://localhost:27017/water_leak_detection,
+#   which is what `docker compose up` publishes. See .env.example.
+#
+# DETECTOR THRESHOLDS — not configured here.
+#   backend/detectors/detector_manager.py reads backend/config/thresholds.yaml.
+#   Edit that file to retune detection.

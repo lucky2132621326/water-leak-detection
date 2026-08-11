@@ -12,8 +12,9 @@ async function startServer() {
   app.use(express.json());
 
   // Thin proxy to the Python FastAPI service (backend/api_server.py), which
-  // owns real detection state (live MQTT-fed or replay-fed — same pipeline
-  // either way). Node no longer generates or evaluates telemetry itself.
+  // owns real detection state for whichever operating mode is active (Mock Data
+  // or Live Sensor — same pipeline either way). Node neither generates nor
+  // evaluates telemetry itself.
   async function proxyToFastApi(req: express.Request, res: express.Response, fastApiPath: string) {
     try {
       const query = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
@@ -49,8 +50,8 @@ async function startServer() {
     { method: "get", path: "/api/telemetry" },
     { method: "get", path: "/api/telemetry/history" },
     { method: "post", path: "/api/leak/toggle" },
-    { method: "get", path: "/api/replay/runs" },
-    { method: "post", path: "/api/replay/evaluate" },
+    { method: "get", path: "/api/benchmark/runs" },
+    { method: "post", path: "/api/benchmark/evaluate" },
     { method: "get", path: "/api/localization/current" },
     { method: "get", path: "/api/work-orders" },
     { method: "post", path: "/api/work-orders/dispatch" },
@@ -60,6 +61,23 @@ async function startServer() {
     { method: "get", path: "/api/alerts" },
     { method: "get", path: "/api/alerts/summary" },
     { method: "get", path: "/api/savings" },
+    { method: "get", path: "/api/status" },
+    { method: "get", path: "/api/analytics/summary" },
+    { method: "get", path: "/api/analytics/roc" },
+    { method: "get", path: "/api/detectors/config" },
+    { method: "get", path: "/api/scenarios" },
+    { method: "post", path: "/api/scenarios/run" },
+    { method: "get", path: "/api/mock/control" },
+    { method: "post", path: "/api/mock/control/release" },
+    { method: "get", path: "/api/calibration" },
+    { method: "post", path: "/api/calibration" },
+    { method: "get", path: "/api/config" },
+    { method: "post", path: "/api/self-test" },
+    { method: "get", path: "/api/experiments/status" },
+    { method: "post", path: "/api/experiments/start" },
+    { method: "post", path: "/api/experiments/stop" },
+    { method: "post", path: "/api/experiments/ground-truth/start" },
+    { method: "post", path: "/api/experiments/ground-truth/stop" },
   ];
 
   for (const route of PROXIED_ROUTES) {
@@ -77,24 +95,6 @@ async function startServer() {
   for (const route of PARAM_ROUTES) {
     app[route.method](route.path, (req, res) => proxyToFastApi(req, res, route.upstream(req.params)));
   }
-
-  // WNTR simulation stays served from Node for now — it's a decorative
-  // placeholder (docs/EXPERIMENT_PROTOCOL.md), not part of the real detection
-  // pipeline, so it doesn't need the FastAPI round-trip.
-  app.get("/api/simulation/wntr", (req, res) => {
-    const hours = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, "0")}:00`);
-    const normalPressure = hours.map((_, h) => Number((32.0 + 3.0 * Math.sin((h * Math.PI) / 12)).toFixed(2)));
-    const leakPressure = normalPressure.map((p, h) => Number((h >= 10 && h <= 18 ? p - 4.5 : p).toFixed(2)));
-
-    res.json({
-      network: "Net3_Rig_Subsystem_24hr (decorative placeholder, not a real WNTR/EPANET solve)",
-      hours,
-      normal_pressure_m: normalPressure,
-      leak_pressure_m: leakPressure,
-      emitter_flow_lpm: 1.45,
-      head_loss_meters: 4.5
-    });
-  });
 
   // Documentation APIs
   app.get("/api/docs", (req, res) => {

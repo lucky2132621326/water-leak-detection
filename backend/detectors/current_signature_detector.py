@@ -1,6 +1,18 @@
 """
 Current Signature Analysis Detector
-Uses Motor Current (INA219) vs Flow Rate to detect hydraulic load shifts during leak initiation.
+
+A leak lowers the circuit's hydraulic resistance, so P1 moves to a different
+point on its head-flow curve and its current shifts. The INA219 measures that
+current high-side on the 12V line.
+
+Raw current must never be thresholded directly: it varies with supply voltage
+and pump duty, so a fixed limit would fire on a sagging adapter and miss a leak
+on a fresh one. The detector fits an expected-current model I = f(Q_in, bus_v)
+and works on the residual against it.
+
+This channel is PHYSICALLY INDEPENDENT of the flow meters — both meters could
+drift together without moving the current signature at all. That independence is
+why fusion weights it heavily and why the plausibility guard consults it.
 """
 
 class CurrentSignatureDetector:
@@ -8,12 +20,17 @@ class CurrentSignatureDetector:
         self.baseline_ma = baseline_ma
         self.threshold_ma = current_drop_threshold_ma
 
-    def predict_expected_current(self, flow_lpm, voltage_v=12.0):
-        # f(flow, voltage) baseline model
-        return self.baseline_ma + (flow_lpm * 2.5)
+    def predict_expected_current(self, flow_lpm, bus_v=12.0):
+        """Expected draw at this flow and bus voltage.
 
-    def analyze(self, current_ma, flow_lpm, voltage_v=12.0):
-        expected_current = self.predict_expected_current(flow_lpm, voltage_v)
+        Motor current scales roughly with supply voltage, so the model is
+        normalised against the nominal 12V rail rather than assuming it.
+        """
+        expected = self.baseline_ma + (flow_lpm * 2.5)
+        return expected * (bus_v / 12.0) if bus_v else expected
+
+    def analyze(self, current_ma, flow_lpm, bus_v=12.0):
+        expected_current = self.predict_expected_current(flow_lpm, bus_v)
         residual_ma = expected_current - current_ma
         
         is_alarm = residual_ma > self.threshold_ma

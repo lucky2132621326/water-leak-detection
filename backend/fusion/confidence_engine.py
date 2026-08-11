@@ -1,6 +1,16 @@
 """
 Confidence Engine
 Categorizes fused multi-signal detection into explainable qualitative levels: LOW, MEDIUM, HIGH, CRITICAL.
+
+`persistence_sec` is how long the alarm has been continuously confirmed. It
+exists so that broad agreement sustained over time escalates to CRITICAL even
+when no single detector is emphatic enough to push the score past 0.75 — three
+independent methods holding for ten seconds is a stronger claim than one
+detector reading high for one sample.
+
+It must be supplied by the caller. Every caller passed only two arguments, so
+it defaulted to 0 and that escalation branch could never evaluate true; the rule
+was documented and dead. DetectionPipeline now passes the real elapsed time.
 """
 
 class ConfidenceEngine:

@@ -42,12 +42,16 @@ def _template_summary(evidence: dict) -> str:
     likelihood = evidence.get("likelihood_score", 0)
     residual = evidence.get("residual_lpm", 0.0)
     active_methods = ", ".join(evidence.get("active_methods", [])) or "none"
-    pressure = evidence.get("pressure_bar")
-    pressure_note = f", pressure trending down to {pressure} bar (estimated)" if pressure is not None else ""
+    # Acoustic corroboration, as a ratio to this rig's own quiet baseline. There
+    # is no pressure channel: this rig has no transducer, and the old code
+    # printed an *estimated* pressure here as though it were an observation.
+    ratio = evidence.get("acoustic_ratio")
+    acoustic_note = (f", with pipe noise at {ratio:.2f}x the quiet baseline in the "
+                     f"50-150 Hz leak band" if ratio is not None else "")
 
     return (
         f"Suspected leak in {zone} — likelihood {likelihood}%. "
-        f"Flow residual {residual:+.2f} L/min sustained above baseline{pressure_note}. "
+        f"Flow residual {residual:+.2f} L/min sustained above baseline{acoustic_note}. "
         f"Confirmed by: {active_methods}. Field verification required before dispatch; "
         f"this is an indicative alert, not a confirmed diagnosis."
     )

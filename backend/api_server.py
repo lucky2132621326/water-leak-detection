@@ -1,12 +1,15 @@
 """FastAPI Bridge
 
-Serves the data/detection routes server.ts used to mock. Owns the live/replay
-mode toggle: both sources run every sample through the same DetectionPipeline
-(backend/pipeline.py) and response_builder, so switching modes only changes
-where samples come from, never how they're evaluated.
+Owns the operating-mode switch. There are exactly two modes — Mock Data and
+Live Sensor — and they differ only in which TelemetrySource is attached. Every
+sample from either source runs through the same TelemetryIngestor and
+DetectionPipeline, so switching modes changes where data comes from, never how
+it is evaluated. See docs/OPERATING_MODES.md.
 
 Run with: uvicorn backend.api_server:app --host 0.0.0.0 --port 8000
 """
+import json
+import os
 import threading
 import time
 from typing import Optional
@@ -16,88 +19,50 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from backend.mqtt.subscriber import LiveTelemetryIngestor, run_subscriber
+from backend.ingestion import TelemetryIngestor, flatten_sample
+from backend.mode import MODE_LIVE, MODE_MOCK, set_active_mode
+from backend.ingestion.mqtt_source import MqttTelemetrySource
+from backend.mock.mock_source import MockTelemetrySource
+from backend.mock.scenarios import get_scenario, list_scenarios, scenario_from_dict
+from backend.mock.leak_control import PRESETS, VALID_LOCATIONS, MAIN as MAIN_TRUNK
 from backend.pipeline import DetectionPipeline
 from backend.response.response_builder import build_response
 from backend.repositories.telemetry_repository import TelemetryRepository
 from backend.repositories.detection_repository import LeakEventRepository, WorkOrderRepository
-from backend.replay.replay_runner import ReplayRunner
+from backend.benchmark.benchmark_scorer import BenchmarkScorer
 from backend.scheduler.cp_sat_scheduler import CPSatWorkOrderScheduler
 from backend.localization.localization_service import LocalizationService
 from backend.alerts.alert_service import get_alert_service
+from backend.analytics.benchmark_analytics import BenchmarkAnalytics
+from backend.fusion.fusion_engine import FusionEngine
 from backend.impact.impact_service import ImpactService, analyze_impact
 from backend.impact.severity import SeverityClassifier
 from backend.reports.experiment_report import ExperimentReportGenerator
-from backend.config.config_loader import impact_loader
+from backend.config.config_loader import impact_loader, thresholds_loader, config_loader
+from backend.services.experiment_service import get_experiment_service
 from backend.utils.logger import logger
 
 app = FastAPI(title="Water Leak Detection API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-class ReplayPlayer:
-    """Streams a stored run's telemetry through the pipeline at ~1 sample/sec,
-    mirroring how live telemetry arrives, so /api/telemetry looks the same to
-    the dashboard regardless of which mode is active."""
+# --- Operating modes ---------------------------------------------------------
+#
+# Exactly two, differing ONLY in where telemetry comes from. Everything after
+# `ingestor.ingest(raw)` — validation, DTO, detectors, fusion, confidence,
+# localization, alerts, impact — is one shared code path, so a mock sample and
+# a rig sample are indistinguishable to the detection logic.
+#
+#   MOCK : MockTelemetrySource (generated scenarios)
+#   LIVE : MqttTelemetrySource (ESP32 over MQTT)
 
-    def __init__(self):
-        self.telemetry_repo = TelemetryRepository()
-        self.pipeline: Optional[DetectionPipeline] = None
-        self.thread: Optional[threading.Thread] = None
-        self.stop_flag = threading.Event()
-        self.latest_response = None
-        self.latest_telemetry = None
-        self.history = []
-        self.current_run_id = None
+_mode = MODE_MOCK  # start in mock so the dashboard is useful before a rig exists
+_ingestor = TelemetryIngestor(source_name=MODE_MOCK)
+_live_source = MqttTelemetrySource()
+_mock_source = None
+_mode_lock = threading.RLock()
 
-    def start(self, run_id: str, speed: float = 4.0):
-        self.stop()
-        docs = self.telemetry_repo.get_by_run(run_id)
-        if not docs:
-            logger.warning(f"[ReplayPlayer] run_id={run_id} has no stored telemetry")
-            return
-        self.current_run_id = run_id
-        self.pipeline = DetectionPipeline()
-        self.stop_flag = threading.Event()
-        self.history = []
-        self.thread = threading.Thread(target=self._play, args=(docs, speed), daemon=True)
-        self.thread.start()
-
-    def _play(self, docs, speed):
-        while not self.stop_flag.is_set():
-            for doc in docs:
-                if self.stop_flag.is_set():
-                    return
-                flow, power, actuators = doc["flow"], doc["power"], doc.get("actuators", {})
-                result = self.pipeline.process_sample(
-                    ts=doc["ts"], q_in=flow["q_in_lpm"], q_out=flow["q_out_lpm"],
-                    q_branch=flow.get("q_branch_lpm", 0.0), current_ma=power["current_ma"],
-                    voltage_v=power.get("voltage", 12.0), pump_on=actuators.get("pump1", True),
-                    servo_state_deg=actuators.get("servo_deg", 0), pressure_bar=doc.get("pressure_bar"),
-                )
-                response = build_response(result)
-                get_alert_service().ingest(response, source="replay", run_id=self.current_run_id)
-                self.latest_response = response
-                self.latest_telemetry = doc
-                self.history.append(doc)
-                if len(self.history) > 120:
-                    self.history.pop(0)
-                time.sleep(1.0 / speed)
-
-    def stop(self):
-        if self.thread and self.thread.is_alive():
-            self.stop_flag.set()
-            self.thread.join(timeout=2)
-
-
-# --- Mode state -------------------------------------------------------------
-_mode = "replay"  # default to replay so the dashboard has data before the rig connects
-_live_ingestor = LiveTelemetryIngestor()
-_replay_player = ReplayPlayer()
-_mqtt_client = None
-
-# Impact analysis and the alert store are stateless-ish singletons; built lazily
-# so importing this module never requires MongoDB to be reachable.
+# Built lazily so importing this module never requires MongoDB to be reachable.
 _impact_singleton = None
 _report_generator = None
 
@@ -120,18 +85,72 @@ def _reports() -> ExperimentReportGenerator:
     return _report_generator
 
 
+def _active_source():
+    return _live_source if _mode == MODE_LIVE else _mock_source
+
+
+def _stop_all_sources():
+    global _mock_source
+    if _mock_source:
+        _mock_source.stop()
+        _mock_source = None
+    _live_source.stop()
+
+
+def _switch_mode(mode: str, scenario_id: str = None, speed: float = 4.0, loop: bool = True):
+    """Change operating mode.
+
+    Detector state is reset on every switch. Every detector is stateful — the
+    mass-balance rolling window, the CUSUM accumulator, the MNF and acoustic
+    baselines — so carrying live-rig state into a mock scenario (or the
+    reverse) would evaluate the first samples against a baseline learned under
+    entirely different conditions.
+    """
+    global _mode, _mock_source, _ingestor
+
+    with _mode_lock:
+        _stop_all_sources()
+        _mode = mode
+        # Repoint the data store BEFORE building the ingestor. Live and mock use
+        # physically separate databases, and every repository resolves its handle
+        # through the active mode — so this one call is what keeps rig data out
+        # of the synthetic store and vice versa.
+        set_active_mode(mode)
+        _ingestor = TelemetryIngestor(source_name=mode)
+
+        if mode == MODE_LIVE:
+            _live_source.start(_ingestor)
+            return {"success": True, "mode": mode, "source": _live_source.describe()}
+
+        scenario = get_scenario(scenario_id or "sudden_leak")
+        if scenario is None:
+            return {"success": False, "error": f"Unknown scenario '{scenario_id}'"}
+        # The interactive scenario streams in real time so timestamps advance
+        # monotonically like a rig; scripted scenarios keep scenario-relative
+        # time so they stay reproducible.
+        interactive = scenario.id == "manual_control"
+        _mock_source = MockTelemetrySource(
+            scenario, speed=speed, loop=loop,
+            run_id=f"MOCK_{scenario.id}",
+            realtime=interactive,
+            persist_ground_truth=not interactive)
+        _mock_source.start(_ingestor)
+        return {"success": True, "mode": mode, "source": _mock_source.describe()}
+
+
 @app.on_event("startup")
 def on_startup():
-    global _mqtt_client
-    try:
-        _mqtt_client, _ = run_subscriber(ingestor=_live_ingestor, blocking=False)
-    except Exception as e:
-        logger.warning(f"[Startup] Could not connect to MQTT broker (live mode will show no data until it's reachable): {e}")
+    """Boot into Mock Data Mode so the dashboard is immediately useful. Live
+    mode is entered explicitly, which also avoids a startup stall when no
+    broker is present."""
+    _switch_mode(MODE_MOCK, scenario_id="manual_control", speed=1.0)
 
 
 class ModeRequest(BaseModel):
     mode: str
-    run_id: Optional[str] = None
+    scenario_id: Optional[str] = None
+    speed: Optional[float] = None
+    loop: Optional[bool] = None
 
 
 @app.get("/api/health")
@@ -139,63 +158,70 @@ def health():
     return {
         "status": "ok",
         "mode": _mode,
-        "mqtt_connected": bool(_mqtt_client and _mqtt_client.is_connected()) if _mqtt_client else False,
+        "mqtt_connected": _live_source.is_running,
         "timestamp": int(time.time()),
     }
 
 
 @app.get("/api/mode")
 def get_mode():
-    return {"mode": _mode, "run_id": _replay_player.current_run_id if _mode == "replay" else None}
+    source = _active_source()
+    return {
+        "mode": _mode,
+        "modes": [MODE_MOCK, MODE_LIVE],
+        "source": source.describe() if source else {"source": _mode, "running": False},
+        "sample_count": _ingestor.sample_count,
+        "rejected_count": _ingestor.rejected_count,
+    }
 
 
 @app.post("/api/mode")
 def set_mode(req: ModeRequest):
-    global _mode
-    if req.mode not in ("live", "replay"):
-        return {"success": False, "error": "mode must be 'live' or 'replay'"}
-    _mode = req.mode
-    if _mode == "replay" and req.run_id:
-        _replay_player.start(req.run_id)
-    return {"success": True, "mode": _mode}
+    if req.mode not in (MODE_MOCK, MODE_LIVE):
+        return {"success": False, "error": f"mode must be '{MODE_MOCK}' or '{MODE_LIVE}'"}
+    return _switch_mode(req.mode, scenario_id=req.scenario_id,
+                        speed=req.speed or 4.0,
+                        loop=True if req.loop is None else req.loop)
 
 
-def _flatten_telemetry(raw: dict, response: Optional[dict], mode: str) -> Optional[dict]:
-    """Normalizes either a raw MQTT payload (live) or a stored Mongo telemetry
-    doc (replay) into the flat {q_in, q_out, ...} shape the dashboard's chart
-    and summary components expect, regardless of source."""
-    if raw is None:
-        return None
+# --- Mock scenarios ----------------------------------------------------------
 
-    if mode == "live":
-        q_in, q_out, q_branch = raw.get("q_in_lpm", 0.0), raw.get("q_out_lpm", 0.0), raw.get("q_branch_lpm", 0.0)
-        current_ma, voltage_v = raw.get("current_ma", 0.0), raw.get("voltage_v", 0.0)
-        pump_on = True  # rig runs the pump continuously; not carried in the MQTT payload
-        leak_active = bool(raw.get("solenoid_state", False))
-        ts = raw.get("ts")
-    else:
-        flow, power, actuators = raw.get("flow", {}), raw.get("power", {}), raw.get("actuators", {})
-        q_in, q_out, q_branch = flow.get("q_in_lpm", 0.0), flow.get("q_out_lpm", 0.0), flow.get("q_branch_lpm", 0.0)
-        current_ma, voltage_v = power.get("current_ma", 0.0), power.get("voltage", 0.0)
-        pump_on = actuators.get("pump1", True)
-        leak_active = bool(response and response.get("is_alarm"))
-        ts = raw.get("ts")
+@app.get("/api/scenarios")
+def get_scenarios():
+    return {"scenarios": list_scenarios(), "active": (_mock_source.scenario.id if _mock_source else None)}
 
-    residual = response.get("residual") if response else round(q_in - q_out - q_branch, 3)
-    pressure_bar = response.get("pressure", {}).get("pressure_bar") if response else raw.get("pressure_bar")
 
-    return {
-        "ts": ts, "q_in": q_in, "q_out": q_out, "q_branch": q_branch,
-        "current_ma": current_ma, "voltage_v": voltage_v, "residual": residual,
-        "pressure_bar": pressure_bar, "pump_on": pump_on, "leak_active": leak_active,
-    }
+@app.post("/api/scenarios/run")
+def run_scenario(body: dict):
+    """Evaluate a scenario end-to-end immediately and score it against its own
+    ground truth. Runs through the same ingestor the dashboard uses, on an
+    isolated instance so an in-progress live/mock stream is not disturbed."""
+    scenario_id = body.get("scenario_id")
+    scenario = get_scenario(scenario_id) if scenario_id else None
+    if scenario is None and body.get("scenario"):
+        try:
+            scenario = scenario_from_dict(body["scenario"])
+        except (TypeError, ValueError) as e:
+            return {"success": False, "error": f"Invalid scenario definition: {e}"}
+    if scenario is None:
+        return {"success": False, "error": f"Unknown scenario '{scenario_id}'"}
+
+    persist = bool(body.get("persist", True))
+    run_id = body.get("run_id") or f"MOCK_{scenario.id}"
+    scratch = TelemetryIngestor(source_name=MODE_MOCK, persist=persist)
+    source = MockTelemetrySource(scenario, run_id=run_id, persist_ground_truth=persist)
+    result = source.run_batch(scratch)
+    result["success"] = True
+    result["persisted"] = persist
+    _analytics_cache.clear()  # a new scored run invalidates cached aggregates
+    return result
 
 
 @app.get("/api/telemetry")
 def get_telemetry():
-    source = _live_ingestor if _mode == "live" else _replay_player
-    flat = _flatten_telemetry(source.latest_telemetry, source.latest_response, _mode)
-    response = source.latest_response
+    snap = _ingestor.snapshot()
+    flat = snap["latest"]
+    response = snap["evaluation"]
 
     # The residual IS the estimated leak rate — water entering the zone that
     # never left it. Attaching its impact summary here means every view reading
@@ -215,25 +241,24 @@ def get_telemetry():
 
 @app.get("/api/telemetry/history")
 def get_telemetry_history():
-    if _mode == "live":
-        docs = TelemetryRepository().get_recent(limit=120, run_id=None)
-        return [_flatten_telemetry(d, None, "replay") for d in docs]
-    return [_flatten_telemetry(d, None, "replay") for d in _replay_player.history]
+    # One in-memory history for whichever mode is active; both are populated by
+    # the same ingestor, so there is no per-mode branch here any more.
+    return _ingestor.recent_history()
 
 
-@app.get("/api/replay/runs")
-def list_replay_runs():
+@app.get("/api/benchmark/runs")
+def list_benchmark_runs():
     from backend.repositories.db import get_db
     db = get_db()
     return list(db.experiment_runs.find({}, {"_id": 0}))
 
 
-@app.post("/api/replay/evaluate")
-def evaluate_replay(body: dict):
+@app.post("/api/benchmark/evaluate")
+def evaluate_benchmark(body: dict):
     run_id = body.get("run_id")
     if not run_id:
         return {"error": "run_id is required"}
-    runner = ReplayRunner()
+    runner = BenchmarkScorer()
     return runner.run(run_id)
 
 
@@ -243,8 +268,7 @@ _ZONE_ISOLATION_VALVE = {"Branch_A": "SOLENOID_VALVE_2", "Branch_B": "SOLENOID_V
 
 @app.get("/api/localization/current")
 def localization_current():
-    source = _live_ingestor if _mode == "live" else _replay_player
-    resp = source.latest_response
+    resp = _ingestor.latest_response
     if not resp or resp.get("zone") in (None, "NONE"):
         return {"localized": False, "node": "NONE", "branch": "NONE", "distance_meters": 0.0, "confidence": 0.0}
     zone = resp["zone"]
@@ -252,21 +276,149 @@ def localization_current():
         "localized": True,
         "node": zone,
         "branch": zone,
-        "distance_meters": None,  # not measurable without a distributed pressure/flow sensor network
+        "distance_meters": None,  # not measurable without a distributed flow/acoustic sensor network
         "confidence": _ZONE_CONFIDENCE_NUMERIC.get(resp["zone_confidence"], 0.0),
         "isolation_valve_suggested": _ZONE_ISOLATION_VALVE.get(zone),
         "likelihood_score": resp["likelihood_score"],
     }
 
 
+def _publish_command(payload: dict) -> tuple[bool, str]:
+    """Publish to the rig's `rig/cmd` topic (docs/MQTT_SPEC.md). The firmware
+    subscribes to it; this is the only path by which the dashboard can actuate
+    hardware, and it is available in live mode only."""
+    return _live_source.publish_command({**payload, "ts": int(time.time())})
+
+
 @app.post("/api/leak/toggle")
 def leak_toggle(body: dict):
-    # Live mode reflects the real rig — this only makes sense as a replay-mode
-    # control (the seeded run already has leak windows baked in; this is a
-    # placeholder for a future "restart replay with a custom leak" feature).
-    if _mode == "live":
-        return {"success": False, "error": "Leak injection is disabled in live mode — the rig is the source of truth."}
-    return {"success": True, "note": "Replay runs currently use their pre-seeded leak window; manual injection is not yet implemented."}
+    """Bench controls — the SAME operator actions in both modes.
+
+    The two modes differ only in what the command reaches:
+      * Live Sensor Mode  → publishes to `rig/cmd`, actuating the real valve.
+      * Mock Data Mode    → mutates the generator's leak state, so the next
+                            synthesized sample already reflects it.
+
+    Either way the resulting telemetry travels the identical
+    ingest → validate → DTO → detect → fuse → localize → alert → impact path.
+    An earlier version refused these in Mock Data Mode, reasoning that mock
+    leaks belong in the scenario. That was wrong: a generator has no hardware
+    constraint, and refusing made the mock environment un-interactive.
+    """
+    action = str(body.get("action", "")).upper()
+
+    # --- pump ---------------------------------------------------------------
+    if "pump_state" in body:
+        if _mode == MODE_LIVE:
+            ok, msg = _publish_command({"cmd": "SET_PUMP", "state": "ON" if body["pump_state"] else "OFF"})
+            return {"success": ok, "message": msg}
+        return {"success": False,
+                "error": "Pump control is not modelled in Mock Data Mode — the generator "
+                         "assumes the pump runs continuously."}
+
+    # --- air bubbles --------------------------------------------------------
+    if "air_bubbles" in body:
+        if _mode == MODE_LIVE:
+            ok, msg = _publish_command({"cmd": "SET_AIR_BUBBLES", "state": "ON" if body["air_bubbles"] else "OFF"})
+            return {"success": ok, "message": msg}
+        return {"success": False,
+                "error": "Air-bubble injection is a scenario fault in Mock Data Mode — "
+                         "run the 'sensor_noise' or 'sensor_fault' scenario instead."}
+
+    # --- leak valve ---------------------------------------------------------
+    if action not in ("OPEN", "CLOSE"):
+        return {"success": False,
+                "error": "Unrecognized command. Expected action OPEN/CLOSE, pump_state, or air_bubbles."}
+
+    location = body.get("location") or MAIN_TRUNK
+    try:
+        size = float(body.get("size", PRESETS["medium"]))
+        ramp = float(body.get("ramp_sec", 0.0))
+    except (TypeError, ValueError):
+        return {"success": False, "error": "size and ramp_sec must be numbers"}
+
+    if _mode == MODE_LIVE:
+        payload = ({"cmd": "SET_VALVE", "valve_id": "leak_valve_1", "state": "OPEN",
+                    "target_lpm": size, "location": location}
+                   if action == "OPEN" else
+                   {"cmd": "SET_VALVE", "valve_id": "leak_valve_1", "state": "CLOSE"})
+        ok, msg = _publish_command(payload)
+        return {"success": ok, "message": msg, "mode": _mode,
+                "target_lpm": size if action == "OPEN" else 0.0}
+
+    if _mock_source is None:
+        return {"success": False, "error": "No mock stream is running. Start one from Mock Scenarios."}
+
+    if action == "OPEN":
+        state = _mock_source.control.open(size, location=location, ramp_sec=ramp)
+        message = (f"Leak opened on {state['location']} at {state['rate_lpm']} L/min"
+                   + (f" (ramping over {ramp:.0f}s)" if ramp else ""))
+    else:
+        state = _mock_source.control.close()
+        message = "Leak closed — telemetry returns to baseline; watch the detectors recover."
+
+    logger.info(f"[MockControl] {message}")
+    return {"success": True, "mode": _mode, "message": message, "leak_control": state}
+
+
+@app.get("/api/mock/control")
+def mock_control_state():
+    """Current mock leak state, for the bench controls to reflect."""
+    if _mock_source is None:
+        return {"available": False,
+                "reason": "Mock Data Mode is not running." if _mode != MODE_MOCK
+                          else "No mock stream is active.",
+                "mode": _mode}
+    return {"available": True, "mode": _mode,
+            "scenario": _mock_source.scenario.summary(),
+            "leak_control": _mock_source.control.snapshot()}
+
+
+@app.post("/api/mock/control/release")
+def mock_control_release():
+    """Return leak control to the scenario script."""
+    if _mock_source is None:
+        return {"success": False, "error": "No mock stream is running."}
+    return {"success": True, "leak_control": _mock_source.control.release()}
+
+
+# --- Experiment control & ground truth ---------------------------------------
+
+@app.get("/api/experiments/status")
+def experiment_status():
+    return get_experiment_service().status()
+
+
+@app.post("/api/experiments/start")
+def experiment_start(body: dict):
+    return get_experiment_service().start_run(
+        run_id=body.get("run_id"),
+        operator=body.get("operator", "unknown"),
+        location=body.get("location", "Branch_A"),
+        leak_size_lpm=body.get("leak_size_lpm", 0.0),
+        pump_mode=body.get("pump_mode", "Constant 12V"),
+        notes=body.get("notes", ""),
+    )
+
+
+@app.post("/api/experiments/stop")
+def experiment_stop():
+    return get_experiment_service().stop_run()
+
+
+@app.post("/api/experiments/ground-truth/start")
+def ground_truth_start(body: dict = None):
+    body = body or {}
+    return get_experiment_service().start_ground_truth_leak(
+        location=body.get("location"),
+        severity_lpm=body.get("severity_lpm"),
+        notes=body.get("notes", ""),
+    )
+
+
+@app.post("/api/experiments/ground-truth/stop")
+def ground_truth_stop():
+    return get_experiment_service().stop_ground_truth_leak()
 
 
 @app.get("/api/work-orders")
@@ -292,10 +444,17 @@ def dispatch_work_order(body: dict):
         severity = float(body.get("severity", 1.25))
         leak_event_id = body.get("leak_event_id", int(time.time()))
 
-    work_orders = scheduler.optimize_schedule([{
-        "id": leak_event_id, "location_node": location, "severity_lpm": severity,
-    }])
-    wo = work_orders[0]
+    # Schedule the new leak alongside every still-open incident, so CP-SAT can
+    # sequence crews across the real outstanding workload rather than treating
+    # each dispatch as if it were the only job.
+    pending = [{
+        "id": a["alert_id"], "location_node": a["zone"], "severity_lpm": a["peak_leak_rate_lpm"],
+    } for a in _alerts().query(status="ACTIVE") if a["alert_id"] != alert_id]
+
+    work_orders = scheduler.optimize_schedule(
+        [{"id": leak_event_id, "location_node": location, "severity_lpm": severity}] + pending
+    )
+    wo = next((w for w in work_orders if w["leak_id"] == leak_event_id), work_orders[0])
     wo["id"] = wo.pop("work_order_id")
     wo["alert_id"] = alert_id
     wo["impact"] = _impact_service().summarize(severity)
@@ -327,8 +486,7 @@ def impact_config():
 def impact_current():
     """Impact of whatever the detector is seeing right now — this is what the
     dashboard's 'Analyze Impact' button pre-fills the simulator from."""
-    source = _live_ingestor if _mode == "live" else _replay_player
-    resp = source.latest_response
+    resp = _ingestor.latest_response
     rate = _alerts().leak_rate_from(resp) if (resp and resp.get("is_alarm")) else 0.0
     return {
         "leak_detected": bool(resp and resp.get("is_alarm")),
@@ -415,9 +573,217 @@ def reopen_alert(alert_id: str):
 
 
 @app.get("/api/savings")
-def savings():
-    """Water Savings Counter — the utility-KPI view of what repairs achieved."""
-    return _alerts().savings()
+def savings(include_mock: bool = False):
+    """Water Savings Counter. Mock incidents are excluded unless asked for —
+    see AlertService.savings()."""
+    return _alerts().savings(include_mock=include_mock)
+
+
+# --- Calibration -------------------------------------------------------------
+
+@app.get("/api/calibration")
+def get_calibration():
+    from backend.calibration.calibration_repository import CalibrationRepository
+    data = dict(CalibrationRepository().data)
+    # K-factors are compiled into the firmware and applied on-device. Storing a
+    # different value here would not change what the ESP32 reports, so the API
+    # says so explicitly rather than implying the dashboard can retune the rig.
+    data["note"] = (
+        "K-factors are applied on-device from firmware/src/config.h. Values saved here "
+        "are the recorded field-calibration record; to change what the rig reports, "
+        "update config.h and reflash."
+    )
+    return data
+
+
+@app.post("/api/calibration")
+def save_calibration(body: dict):
+    from backend.calibration.calibration_repository import CalibrationRepository
+    allowed = {"flow1_k", "flow2_k", "flow3_k", "bias_lpm", "sigma_lpm",
+               "ina219_no_load_ma", "ina219_load_slope"}
+    update = {}
+    for key, value in (body or {}).items():
+        if key not in allowed:
+            continue
+        try:
+            update[key] = float(value)
+        except (TypeError, ValueError):
+            return {"success": False, "error": f"{key} must be a number"}
+
+    if not update:
+        return {"success": False, "error": f"No recognized fields. Expected any of: {sorted(allowed)}"}
+
+    update["calibrated_at"] = time.time()
+    update["source"] = "field calibration"
+    repo = CalibrationRepository()
+    repo.save_calibration(update)
+    return {"success": True, "calibration": repo.data,
+            "note": "Recorded. K-factors still require a firmware reflash to take effect on the rig."}
+
+
+# --- Runtime configuration & self-test ---------------------------------------
+
+@app.get("/api/config")
+def get_config():
+    """Effective runtime configuration — reports the values actually in force,
+    including which file won where two files disagree."""
+    return {
+        "mqtt": {
+            "host": config_loader.get("mqtt.host", "localhost"),
+            "port": config_loader.get("mqtt.port", 1883),
+            "topic": config_loader.get("mqtt.topic", "rig/telemetry"),
+            "cmd_topic": config_loader.get("mqtt.cmd_topic", "rig/cmd"),
+        },
+        "database": {
+            "uri": os.getenv("MONGO_URI", "mongodb://localhost:27017"),
+            "name": os.getenv("MONGO_DB_NAME", "water_leak_detection"),
+            "source": "MONGO_URI environment variable (settings.yaml database.uri is not read)",
+        },
+        "detector": {
+            "sigma_multiplier": thresholds_loader.get("mass_balance.sigma_threshold", 3.0),
+            "persistence_samples": thresholds_loader.get("mass_balance.persistence_seconds", 5),
+            "current_drop_threshold_ma": thresholds_loader.get("current_signature.drop_threshold_ma", 25.0),
+            "cusum_k": thresholds_loader.get("cusum.k_allowance", 0.15),
+            "cusum_h": thresholds_loader.get("cusum.h_decision_threshold", 5.0),
+            "source": "backend/config/thresholds.yaml",
+        },
+        "editable": False,
+        "note": (
+            "Detector thresholds are read from thresholds.yaml at startup. Edit that file "
+            "and restart the API to change them — they are deliberately not writable over "
+            "HTTP so a running experiment cannot have its detection criteria changed mid-run."
+        ),
+    }
+
+
+@app.post("/api/self-test")
+def run_self_test():
+    """Runs the real backend self-test (backend/self_test/system_self_test.py)
+    and returns its captured output."""
+    import io
+    import contextlib
+    from backend.self_test.system_self_test import run_self_test as _run
+
+    buffer = io.StringIO()
+    passed = False
+    try:
+        with contextlib.redirect_stdout(buffer):
+            _run()
+        passed = "PASSED" in buffer.getvalue().upper()
+    except Exception as e:
+        buffer.write(f"\nSELF-TEST FAILED WITH EXCEPTION: {e}")
+
+    return {"passed": passed, "output": buffer.getvalue(), "timestamp": int(time.time())}
+
+
+# --- Benchmark analytics (computed, never authored) -------------------------
+
+_analytics_cache = {"summary": None, "roc": None}
+
+
+@app.get("/api/analytics/summary")
+def analytics_summary(refresh: bool = False):
+    """Re-scores every stored run. That is expensive, so the result is
+    cached until explicitly refreshed — the underlying runs are immutable."""
+    if _analytics_cache["summary"] is None or refresh:
+        _analytics_cache["summary"] = BenchmarkAnalytics().summary()
+    return _analytics_cache["summary"]
+
+
+@app.get("/api/analytics/roc")
+def analytics_roc(run_id: Optional[str] = None, refresh: bool = False):
+    key = f"roc:{run_id}"
+    if _analytics_cache.get(key) is None or refresh:
+        _analytics_cache[key] = BenchmarkAnalytics().roc(run_id)
+    return _analytics_cache[key]
+
+
+@app.get("/api/detectors/config")
+def detectors_config():
+    """The fusion weights actually in force, so the UI can display the formula
+    it is really running rather than a hand-copied version of it."""
+    engine = FusionEngine()
+    return {
+        "weights": engine.weights,
+        "formula": " + ".join(f"{w:.2f}·{k}" for k, w in engine.weights.items()),
+        "thresholds": {
+            "mass_balance_sigma": thresholds_loader.get("mass_balance.sigma_threshold", 3.0),
+            "mass_balance_persistence_samples": thresholds_loader.get("mass_balance.persistence_seconds", 5),
+            "current_drop_ma": thresholds_loader.get("current_signature.drop_threshold_ma", 25.0),
+            "cusum_k": thresholds_loader.get("cusum.k_allowance", 0.15),
+            "cusum_h": thresholds_loader.get("cusum.h_decision_threshold", 5.0),
+            "mnf_window": f"{thresholds_loader.get('mnf.night_window_start', '01:00')}–{thresholds_loader.get('mnf.night_window_end', '05:00')}",
+        },
+        # The guard can veto a fused alarm, so the published formula would be
+        # incomplete without it — mass_balance, cusum and mnf all read the same
+        # residual, and their agreement alone cannot prove that reading is real.
+        "plausibility_guard": {
+            "enabled": bool(thresholds_loader.get("plausibility.enabled", True)),
+            "current_ma_per_leak_lpm": thresholds_loader.get("plausibility.current_ma_per_leak_lpm", 35.0),
+            "acoustic_min_residual_lpm": thresholds_loader.get("plausibility.acoustic_min_residual_lpm", 1.0),
+            "margin": thresholds_loader.get("plausibility.margin", 2.0),
+            "min_residual_lpm": thresholds_loader.get("plausibility.min_residual_lpm", 0.75),
+            "rule": (
+                "A flow-channel alarm is withheld when an independent channel that "
+                "should have resolved a leak of the claimed size reports nothing, and "
+                "no channel corroborates. Suppression is reported as an instrument fault."
+            ),
+        },
+    }
+
+
+@app.get("/api/status")
+def system_status():
+    """Real component status for the dashboard's top row. Every field is
+    observed, not asserted — an unreachable component reports as down."""
+    last = _ingestor.latest_telemetry
+
+    mongo_ok, record_count, mongo_error = False, None, None
+    try:
+        from backend.repositories.db import get_db
+        db = get_db()
+        db.command("ping")
+        mongo_ok = True
+        record_count = db.telemetry.estimated_document_count()
+    except Exception as e:
+        mongo_error = str(e)[:120]
+
+    mqtt_ok = _live_source.is_running
+
+    # The rig is considered online only if live telemetry arrived recently.
+    rig_online, rig_last_seen = False, None
+    if _mode == MODE_LIVE and _ingestor.latest_telemetry:
+        rig_last_seen = _ingestor.latest_telemetry.get("ts")
+        try:
+            rig_online = (time.time() - float(rig_last_seen)) < 10
+        except (TypeError, ValueError):
+            rig_online = False
+
+    return {
+        "mode": _mode,
+        "source": (_active_source().describe() if _active_source() else {"source": _mode, "running": False}),
+        "rig": {
+            "online": rig_online,
+            "last_seen_ts": rig_last_seen,
+            "detail": "receiving telemetry" if rig_online else (
+                "no telemetry received" if _mode == MODE_LIVE else "not applicable in Mock Data Mode"),
+        },
+        "mqtt": {
+            "connected": mqtt_ok,
+            "detail": "subscribed to rig/telemetry" if mqtt_ok else "broker unreachable",
+        },
+        "mongodb": {
+            "connected": mongo_ok,
+            "telemetry_records": record_count,
+            "detail": "connected" if mongo_ok else (mongo_error or "unreachable"),
+        },
+        "pipeline": {
+            "receiving": last is not None,
+            "detail": "processing samples" if last is not None else "no samples yet",
+        },
+        "healthy": mongo_ok and (mqtt_ok or _mode == MODE_MOCK) and last is not None,
+        "timestamp": int(time.time()),
+    }
 
 
 # --- Automatic experiment reports -------------------------------------------

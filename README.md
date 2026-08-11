@@ -12,9 +12,16 @@ Before running the application or physical rig components, ensure the following 
 * **Node.js**: `v18.x` or `v20.x` (LTS recommended)
 * **npm**: `v9.x` or higher
 * **Python**: `3.9+` (with `pip` package manager)
-* **MQTT Broker**: Mosquitto MQTT Broker (or compatible broker) running on port `1883`
-* **Database**: MongoDB instance (v6.0+ recommended) running on `mongodb://localhost:27017`
+* **Docker Desktop**: provides MongoDB (and optionally the MQTT broker) via
+  `docker-compose.yml` — see Step 3. Install from
+  [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
+  or `brew install --cask docker`.
 * **Firmware (Optional for Physical Rig)**: PlatformIO CLI or Arduino IDE with ESP32 board support packages
+
+> **MongoDB and Mosquitto are no longer installed per-machine.** They run as
+> containers so every developer gets identical versions with one command. A
+> pre-existing Homebrew install still works — Docker publishes the same default
+> ports — but the two cannot run at once (see Troubleshooting).
 
 ---
 
@@ -59,6 +66,41 @@ pip install -r requirements.txt
 > with `command not found: python`. On Windows the activate command is
 > `.venv\Scripts\activate`.
 
+---
+
+### Step 3: Start MongoDB (Docker)
+
+With Docker Desktop running, bring up the database from the project root:
+
+```bash
+docker compose up -d
+```
+
+This starts MongoDB 7.0 as container `wld-mongo`, published on the standard
+`localhost:27017`. Data persists in a Docker named volume (`mongo_data`), so it
+survives restarts and `docker compose down`.
+
+Confirm it is accepting connections:
+
+```bash
+docker compose ps
+```
+
+`STATUS` should read `Up ... (healthy)`. To block until it is ready — useful in
+scripts and CI — start it with `docker compose up -d --wait` instead.
+
+**Optional — MQTT broker for Live Sensor Mode.** Mock Data Mode, the dashboard
+and the whole test suite do not need this, so it is behind a profile and stays
+stopped unless you ask for it:
+
+```bash
+docker compose --profile live up -d
+```
+
+> **No application configuration is required.** `backend/repositories/db.py`
+> already defaults to `mongodb://localhost:27017`, which is exactly what the
+> container publishes. Set `MONGO_URI` only if you deliberately remap the port.
+
 *Required Python libraries installed:*
 * `pyyaml`: Configuration parsing
 * `paho-mqtt`: MQTT communication client
@@ -76,48 +118,61 @@ pip install -r requirements.txt
 
 ---
 
-## 🚀 Quick Start (Replay Mode — no hardware required)
+## 🚀 Quick Start (Mock Data Mode — no hardware required)
 
 The dashboard needs **two processes**: the Python detection API on port `8000`
 and the Express/Vite web server on port `3000`. Express is only a thin proxy —
 if the Python service isn't running, every view returns
 `502 Detection backend unreachable` and renders empty.
 
-Make sure MongoDB is running first (`brew services start mongodb-community` on
-macOS), and that your virtual environment is activated (`source .venv/bin/activate`
-— see Step 2), then:
+Make sure MongoDB is running (`docker compose up -d`, see Step 3) and your
+virtual environment is activated (`source .venv/bin/activate`, see Step 2),
+then:
 
-**Step 1 — seed a replay run** (300 telemetry samples with a ground-truth leak
-window, so Replay mode has real data before any hardware exists):
-
-```bash
-python -m backend.replay.seed_runs
-```
-
-**Step 2 — start the detection API** (terminal 1):
+**Step 1 — start the detection API** (terminal 1):
 
 ```bash
 python -m uvicorn backend.api_server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-**Step 3 — start the dashboard** (terminal 2):
+**Step 2 — start the dashboard** (terminal 2):
 
 ```bash
 npm run dev
 ```
 
-Open **http://localhost:3000**. The system defaults to Replay mode and loops the
-seeded run through the real detection pipeline, so leak alerts, severity and
-cost impact appear on their own roughly every 75 seconds.
+Open **http://localhost:3000**. The system boots into **Mock Data Mode** and
+streams a generated leak scenario through the real detection pipeline, so leak
+alerts, severity and cost impact appear on their own.
+
+Use the **Mock Scenarios** tab to pick a different scenario (small/large/gradual
+leak, branch-specific, night flow, sensor faults) or to score all ten against
+their known ground truth. Switch to **Live Sensor Mode** from the header badge
+once a rig is publishing — everything after ingestion is the identical pipeline.
+See `docs/OPERATING_MODES.md`.
 
 > **Run both commands from the repository root.** `config_loader.py` resolves
 > `backend/config/*.yaml` by relative path, so launching uvicorn from inside
 > `backend/` silently falls back to hardcoded defaults instead of your YAML.
 
-> **Live mode requires an MQTT broker** on port `1883`
-> (`brew install mosquitto && brew services start mosquitto`). Without it the
-> backend logs a single startup warning and Replay mode works normally — this is
-> not a failure. Live and Replay run through the identical `DetectionPipeline`.
+> **Live Sensor Mode requires an MQTT broker** on port `1883`
+> (`docker compose --profile live up -d`). Without it the backend reports the
+> broker unreachable and Mock Data Mode works normally — this is not a failure.
+
+### Stopping
+
+Stop the app servers with `Ctrl+C` in each terminal. Then stop the containers:
+
+```bash
+docker compose down
+```
+
+Your database is preserved. To wipe it entirely (Mock Data Mode regenerates its
+own scenarios, so nothing needs re-seeding) use:
+
+```bash
+docker compose down -v
+```
 
 ---
 
@@ -223,6 +278,13 @@ detector:
   cusum_slack_k: 0.15
   cusum_decision_h: 3.0
 ```
+
+> **Careful with `database.uri`:** `backend/repositories/db.py` reads the
+> `MONGO_URI` **environment variable** (falling back to
+> `mongodb://localhost:27017`) and does *not* consult this YAML block. Editing
+> `database.uri` here has no effect on where the backend actually connects. The
+> default already matches what `docker compose up -d` publishes, so for normal
+> development neither needs touching.
 
 ---
 

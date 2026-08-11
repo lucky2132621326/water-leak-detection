@@ -22,7 +22,7 @@ export const ReportsView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/replay/runs")
+    fetch("/api/benchmark/runs")
       .then((r) => r.json())
       .then((data) => {
         const rows: ReplayRun[] = Array.isArray(data) ? data : [];
@@ -98,7 +98,7 @@ export const ReportsView: React.FC = () => {
 
         {runs.length === 0 ? (
           <div className="py-10 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">
-            No stored experiment runs. Seed one with <code className="font-mono text-slate-600">python -m backend.replay.seed_runs</code>.
+            No stored runs yet. Score a scenario from <strong>Mock Scenarios</strong>, or record a live run from <strong>Experiment Control</strong>.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

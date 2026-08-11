@@ -51,7 +51,15 @@ class MNFDetector:
 
         is_anomaly = residual_lpm > self.max_allowed_residual_lpm
         if is_anomaly:
-            self.consecutive_triggers += 1
+            # Capped, for the same reason MassBalanceDetector caps its counter.
+            # Unbounded, this counter reaches the length of the leak, and since a
+            # clean sample only decrements it by one, recovery then takes as many
+            # samples as the leak lasted: a 160-second night leak kept MNF
+            # latched in alarm for 156 seconds after the residual returned to
+            # normal. The fix was applied to mass balance but never carried
+            # across to this detector.
+            self.consecutive_triggers = min(self.persistence_count,
+                                            self.consecutive_triggers + 1)
         else:
             self.consecutive_triggers = max(0, self.consecutive_triggers - 1)
 

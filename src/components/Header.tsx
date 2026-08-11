@@ -5,7 +5,7 @@ interface HeaderProps {
   systemOnline?: boolean;
   unreadCount?: number;
   onOpenAlerts?: () => void;
-  mode?: "live" | "replay";
+  mode?: "live" | "mock";
   onToggleMode?: () => void;
 }
 
@@ -13,7 +13,7 @@ export const Header: React.FC<HeaderProps> = ({
   systemOnline = true,
   unreadCount = 3,
   onOpenAlerts,
-  mode = "replay",
+  mode = "mock",
   onToggleMode
 }) => {
   const [timeStr, setTimeStr] = useState("");
@@ -63,11 +63,11 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Header Controls: Live Clock, Notifications, Profile */}
       <div className="flex items-center space-x-6">
-        {/* Live/Replay data-source toggle — same UI/detection pipeline either way */}
+        {/* Mock/Live data-source toggle — identical detection pipeline either way */}
         {onToggleMode && (
           <button
             onClick={onToggleMode}
-            title="Switch between live rig telemetry and replayed historical runs"
+            title="Switch telemetry source: generated mock data or the live ESP32 rig"
             className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition flex items-center space-x-2 ${
               mode === "live"
                 ? "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100"
@@ -75,7 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <span className={`w-2 h-2 rounded-full ${mode === "live" ? "bg-rose-500 animate-pulse" : "bg-indigo-500"}`} />
-            <span>{mode === "live" ? "LIVE (Rig)" : "REPLAY"}</span>
+            <span>{mode === "live" ? "LIVE SENSORS" : "MOCK DATA"}</span>
           </button>
         )}
 
