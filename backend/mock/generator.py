@@ -62,6 +62,13 @@ class MockTelemetryGenerator:
         self._pulses_branch = 0
         self._stuck_value = None
         self._seq = 0
+        #: Per-run mounting gain, drawn once. A hand-fitted accelerometer couples
+        #: to the pipe differently every time it is refitted, so absolute band
+        #: energies are not comparable across runs — only ratios are. Varying it
+        #: per run means anything that accidentally depends on absolute level
+        #: fails here rather than on the bench.
+        self._mount_gain = 1.0 + self.rng.gauss(0.0, scenario.vib_mount_gain_spread / 2.0)
+        self._mount_gain = max(0.35, self._mount_gain)
 
         # K-factors come from the same config the backend converts with, so mock
         # pulse counts and mock rates cannot disagree.
@@ -222,6 +229,18 @@ class MockTelemetryGenerator:
             },
         }
         payload["vibration"] = self._vibration(total_leak, kinds)
+
+        if s.emit_pressure:
+            # SIMULATED. Mock mode only — the physical rig has no transducer, and
+            # the live firmware publishes no such field. Computed from the same
+            # q_in and total_leak that drive flow and current above, so the three
+            # channels are coherent by construction.
+            payload["pressure"] = {
+                "bar": round(self._simulated_pressure(q_in, total_leak), 4),
+                # Never "measured", never "estimated".
+                "source": "simulated",
+                "is_simulated": True,
+            }
         return payload
 
     def _accumulate_pulses(self, q_in, q_out, q_branch) -> dict:
@@ -235,6 +254,32 @@ class MockTelemetryGenerator:
             "pulses_out": self._pulses_out,
             "pulses_branch": self._pulses_branch,
         }
+
+    def _simulated_pressure(self, q_in: float, total_leak: float) -> float:
+        """SIMULATED line pressure at the tee. Nothing here is measured.
+
+        Physically coherent with flow and current in the same frame, which is the
+        whole point — three channels that contradict each other are worse than
+        one channel, because they teach a reviewer to distrust all of them.
+
+        Two effects, both in the same direction for a leak:
+
+          1. **Pump curve.** Head falls as throughput rises. A leak opens an
+             extra path, total flow goes up, so the operating point slides down
+             the curve.
+          2. **Local sag at the tee.** Water escaping upstream of the gauge drops
+             the pressure it sees, over and above the curve effect.
+
+        The same `total_leak` drives the current shift in `sample_at`, so a leak
+        that raises flow and lowers current necessarily also lowers pressure.
+        They cannot disagree — they are computed from one number.
+        """
+        s = self.scenario
+        pressure = (s.pressure_shutoff_bar
+                    - s.pressure_curve_slope * max(0.0, q_in)
+                    - s.pressure_per_leak_lpm * total_leak
+                    + self.rng.gauss(0.0, s.pressure_noise_bar))
+        return max(0.0, pressure)
 
     def _vibration(self, total_leak: float, kinds: set) -> dict:
         """Band energies from the on-device FFT.
@@ -257,9 +302,32 @@ class MockTelemetryGenerator:
         del kinds  # sensor faults are flow-meter faults; they do not alter the pipe's noise
 
         noise = lambda: self.rng.gauss(0.0, s.vib_noise)
+
+        # A leak raises band_mid strongly and its neighbours only weakly. That
+        # DISPROPORTION is the signal — it is what makes spectral_tilt
+        # (band_mid / band_low) informative and why the detector keys on band_mid
+        # rather than overall RMS.
         band_mid = max(0.0, s.vib_baseline_mid + s.vib_per_leak_lpm * total_leak + noise())
         band_low = max(0.0, 0.012 + 0.004 * total_leak + noise())
         band_high = max(0.0, 0.020 + 0.010 * total_leak + noise())
+
+        # Cavitation burst: loud, broadband, and NO leak behind it. Air coming
+        # out of solution at the pump inlet does this. It raises every band at
+        # once — unlike a leak, which tilts the spectrum — so the persistence
+        # requirement and spectral_tilt are what tell them apart. A mock corpus
+        # without these would overstate precision, because the acoustic channel's
+        # single biggest false-positive source would be missing.
+        if self.rng.random() < s.cavitation_burst_probability:
+            gain = s.cavitation_burst_gain
+            band_low *= gain
+            band_mid *= gain
+            band_high *= gain
+
+        # Per-run mounting coupling, applied to every band equally. Absolute
+        # levels shift run to run; ratios do not.
+        band_low *= self._mount_gain
+        band_mid *= self._mount_gain
+        band_high *= self._mount_gain
 
         vib = {
             "rms": round(math.sqrt(band_low ** 2 + band_mid ** 2 + band_high ** 2), 6),
@@ -272,8 +340,11 @@ class MockTelemetryGenerator:
 
         if s.emit_piezo:
             # The piezo reaches higher frequencies than the MPU6050, so a leak
-            # pushes its spectral centroid up as well as its amplitude.
-            vib["piezo_rms"] = round(max(0.0, 0.015 + 0.012 * total_leak + noise()), 6)
+            # raises both its amplitude and its centroid. NOTE the centroid is a
+            # slope-weighted zero-crossing proxy in firmware, not calibrated Hz —
+            # modelled the same way here so mock and rig agree in character.
+            vib["piezo_rms"] = round(max(0.0, (0.015 + 0.012 * total_leak + noise())
+                                         * self._mount_gain), 6)
             vib["piezo_centroid_hz"] = round(85.0 + 45.0 * min(1.0, total_leak / 1.5)
                                              + self.rng.gauss(0, 3), 1)
         return vib

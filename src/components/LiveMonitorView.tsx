@@ -127,7 +127,7 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
           </div>
         </div>
 
-        {/* Pump Current & Pressure Chart */}
+        {/* Pump Current Chart */}
         <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-xs">
           <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center justify-between">
             <span>Pump Motor Load Current (I_mA)</span>

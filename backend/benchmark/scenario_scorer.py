@@ -50,6 +50,10 @@ def score_scenario(spec, step_sec: float = 1.0, grace: float = None) -> dict:
             servo_state_deg=dto.actuators.servo_deg,
             vibration=dto.vibration,
             water_c=dto.temp.water_c,
+            pump1=dto.actuators.pump1,
+            pump2=dto.actuators.pump2,
+            # SIMULATED, mock only. The live pipeline never receives this.
+            pressure_bar=dto.pressure.bar if dto.pressure else None,
         )
 
         alarm = result["state"]["is_confirmed"]

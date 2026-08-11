@@ -1,5 +1,109 @@
 # CHANGELOG
 
+## [2026-08-11] — Acoustic ML channel, per-mode pressure, fabricated-number sweep
+
+### Firmware unblocked (Priority 1)
+- **DLPF was running at 94 Hz, not 260 Hz.** `vibration_sensor.cpp` declared
+  `DLPF_260HZ = 0x02`, but on the MPU6050 `DLPF_CFG=2` is 94 Hz — the constant
+  was named for the value it should have held. The damage landed exactly on the
+  acoustic features: band_mid is 50-150 Hz so everything above 94 Hz was rolled
+  off, band_high (150-250 Hz) sat entirely in the stopband and read near-zero
+  regardless of leak state, and spectral_tilt was skewed because only its
+  numerator was filtered. Now `DLPF_CFG_260HZ = 0x00`, with the full register
+  table in the comment.
+- `firmware/src/secrets.h` created (gitignored) — `config.h` includes it, so the
+  firmware would not compile without it.
+- `Wire.setClock(400000)`. A 6-byte accel read drops from ~800 us to ~200 us
+  against a 2000 us sample budget: ~10x headroom instead of ~2.5x. Overrun the
+  budget and the spin-to-next-instant becomes a no-op, the sample rate silently
+  falls, and the whole frequency axis shifts — moving the band edges the
+  features are defined against.
+- `scikit-learn` pinned to **exactly 1.6.1**, the version that trained the
+  bundle. Under 1.9.0 it loaded but sklearn declined to guarantee the
+  predictions; a model that loads and quietly mispredicts is worse than one that
+  refuses to load.
+
+### Acoustic ML channel (Priority 2)
+- `backend/ml/acoustic_features.py` — ONE feature implementation, imported by
+  both the training exporter and the runtime detector. Two implementations that
+  agree today is how a model ends up scored on inputs it never saw, and the
+  failure is silent.
+- **Duty-keyed baselines.** P2 cycles demand, so a single EMA baseline chases
+  the cycling and the ratio features inherit a phantom swing. Both the
+  rule-based and ML acoustic channels now bucket by pump duty, matching the
+  bundle's own `{band_*_base: {0.6, 0.8, 1.0}}` structure. `spectral_tilt` is
+  immune by construction — same sensor, same instant, two bands.
+- `acoustic_ml` detector: predict_proba as confidence, the same persistence
+  discipline as every other channel, and UNAVAILABLE (never an exception) on a
+  missing bundle, corrupt bundle, sklearn mismatch, absent accelerometer, or
+  null piezo / water temperature.
+- **Honesty gate.** `enabled` defaults False in code. Live mode refuses any
+  bundle whose `note` is not exactly `'trained on physical ground truth'`. The
+  shipped bundle reads `'SYNTHETIC — not valid results'`, so it demonstrates the
+  integration in mock and is refused in live. The note travels on every result
+  and is rendered as a visible banner, not a tooltip.
+- `scripts/export_acoustic_training.py` — the retraining path. Rows missing any
+  model input are DROPPED, never imputed: filling a gap with a mean teaches the
+  model that the mean is what a missing sensor looks like.
+
+### Pressure: mock only, labelled SIMULATED (Priority 3)
+- **Live mode has no pressure at all.** Not a field, not a detector, not an
+  import — `DetectorManager` constructs `SimulatedPressureDetector` only in mock
+  and imports it lazily inside that branch, so a live process never loads the
+  module.
+- **The critical labelling bug is fixed.** Alerts read "pressure 2.38 bar
+  (measured)" and "trending down to 2.04 bar (estimated)". Nothing was measured
+  and nothing was estimated — every value was generated. The words "measured"
+  and "estimated" no longer appear anywhere near pressure; it is SIMULATED, with
+  a visible badge.
+- **Physically coherent.** Pressure now follows a pump curve (shut-off head
+  0.85 bar — realistic for a 12V diaphragm pump, not the fabricated 2.5 bar) and
+  is computed from the same `q_in` and `total_leak` that drive flow and current.
+  The three cannot contradict: verified at 418→330 mA, 0.548→0.430 bar,
+  band_mid 0.029→0.162 across one leak.
+
+### Fusion handles a variable channel count
+- 6 live, 7 mock, renormalised over contributing detectors so effective weights
+  always sum to 1.0.
+- **The corroboration rule now counts SENSOR GROUPS, not detectors.**
+  mass_balance/cusum/mnf are one flow measurement; acoustic/acoustic_ml share
+  one accelerometer. Counting detectors let a dead outlet meter trip the rule
+  with three "agreeing" views of one broken number.
+- Weights rebalanced after this change dropped `small_leak` to zero recall and
+  made mock and live disagree on the same leak. `tests/test_mode_channels.py`
+  now asserts that parity directly.
+
+### Fabricated numbers removed (Priority 4)
+- **Per-tier false-positive rates deleted.** Every alert shipped "1% / 3% / 8% /
+  20% by confidence tier", citing a DECISIONS.md figure never measured against
+  logged leak events. Now `null` plus an explicit basis string explaining how a
+  real figure would be obtained.
+- **`mnf?.confidence ?? 0.700`** in DetectionEngineView invented a 70% MNF
+  confidence whenever MNF had nothing to say — which is most of the day, since
+  it only evaluates 01:00-05:00. Every other detector fell back to 0. Now "—".
+- Localization no longer claims "pressure drop propagation mapping"; it does a
+  Branch A step test.
+
+### Mock fidelity (Priority 5)
+- Per-run mounting gain: a hand-fitted accelerometer couples differently every
+  time, so absolute band energies are not comparable across runs. Anything that
+  accidentally depends on absolute level now fails in mock rather than on the
+  bench.
+- Cavitation bursts: short, loud, broadband, and with no leak behind them — the
+  acoustic channel's main false-positive source. A corpus without them overstates
+  precision.
+
+### Known limitations
+- The ML channel costs ~15 ms per sample (300-tree forest, per-call overhead;
+  100x faster batched). Irrelevant at 1 Hz runtime, but offline scenario scoring
+  is now minutes rather than seconds.
+- Firmware not compile-verified — PlatformIO is not installed on the dev machine.
+- The 1.28 s vibration burst still exceeds the 1000 ms telemetry interval. Flow
+  rates self-correct via measured elapsed time; command latency ~1.3 s.
+- `resolve_pump_duty`'s definition must match whatever the training notebook
+  used to bucket its baseline. That definition is not stored in the bundle and
+  cannot be verified from it.
+
 ## [2026-08-11] — Plausibility guard, three latching bugs, clock integrity
 
 ### Physical plausibility guard (resolves the open `sensor_fault` failure)

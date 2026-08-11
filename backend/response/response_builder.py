@@ -13,16 +13,24 @@ _DISCLAIMER = (
     "instructions."
 )
 
-_CONFIDENCE_FALSE_POSITIVE_RATE = {
-    # Rough false-positive rate by confidence tier, based on the fusion engine's
-    # historical false-positive reduction (docs/DECISIONS.md #003: 14.2% -> <1.5%
-    # once multi-sensor fusion requires 2+ concurrent methods).
-    "CRITICAL": 0.01,
-    "HIGH": 0.03,
-    "MEDIUM": 0.08,
-    "LOW": 0.20,
-    "NONE": 1.0,
-}
+# There is deliberately NO per-tier false-positive rate table here any more.
+#
+# The old one asserted 1% / 3% / 8% / 20% by confidence tier, citing
+# docs/DECISIONS.md #003's "14.2% -> <1.5%" figure. That figure was never
+# measured against logged leak events, so the rates were a plausible-looking
+# invention presented to an operator as a property of the system — the exact
+# failure this codebase has been sweeping for.
+#
+# A real false-positive rate is computable: score a set of runs against their
+# operator-logged leak windows (backend/benchmark/ground_truth.py produces
+# precision and a false-alarms-per-hour figure). Until runs exist, the honest
+# answer is "not yet measured", and that is what ships.
+_FP_RATE_BASIS = (
+    "No false-positive rate has been measured for this configuration. A real "
+    "figure requires scoring recorded runs against operator-logged leak events "
+    "(Analytics -> Benchmark). Confidence tier reflects how much independent "
+    "evidence backs this alarm, not an error probability."
+)
 
 
 def _format_time_window(alarm_onset_ts, ts):
@@ -55,6 +63,21 @@ def _build_evidence_text(pipeline_result):
     if current.get("residual_ma"):
         parts.append(f"pump current {current['residual_ma']:+.0f} mA vs model")
 
+    ml = detectors.get("acoustic_ml") or {}
+    if ml.get("active") and ml.get("probability") is not None:
+        # The provenance is inseparable from the number. A synthetic-trained
+        # model's probability describes the generator it learned, not this pipe,
+        # so the caveat is part of the sentence rather than a footnote.
+        marker = " [SYNTHETIC MODEL]" if ml.get("is_synthetic_model") else ""
+        parts.append(f"ML leak probability {ml['probability']:.2f}{marker}")
+
+    # Present only in mock — the live detector set has no pressure channel at
+    # all, so this branch cannot execute for a real rig. Always "SIMULATED",
+    # never "measured" and never "estimated".
+    pressure = detectors.get("pressure_drop") or {}
+    if pressure.get("active") and pressure.get("pressure_bar") is not None:
+        parts.append(f"pressure {pressure['pressure_bar']} bar (SIMULATED)")
+
     if active_methods:
         parts.append(f"confirmed by {', '.join(active_methods)}")
     else:
@@ -75,7 +98,6 @@ def build_response(pipeline_result, zone_names=None):
     likelihood_score = round(fusion["fused_score"] * 100, 1)
     time_window = _format_time_window(pipeline_result["alarm_onset_ts"], pipeline_result["ts"])
     evidence_text = _build_evidence_text(pipeline_result)
-    false_positive_rate = _CONFIDENCE_FALSE_POSITIVE_RATE.get(tier, 0.20)
 
     evidence_for_summary = {
         "zone": localization.get("zone", "NONE"),
@@ -84,6 +106,29 @@ def build_response(pipeline_result, zone_names=None):
         "active_methods": fusion["active_methods"],
         "acoustic_ratio": (next((d for d in pipeline_result["detectors"] if d["method"] == "acoustic"), {}) or {}).get("ratio"),
     }
+
+    detectors_raw = {d["method"]: d for d in pipeline_result["detectors"]}
+    pressure_channel = detectors_raw.get("pressure_drop")
+    ml_channel = detectors_raw.get("acoustic_ml")
+
+    # Provenance blocks. These exist so the UI physically cannot render a value
+    # without the caveat that qualifies it — a badge in a tooltip is a badge
+    # nobody reads.
+    simulated_channels = {}
+    if pressure_channel is not None:
+        simulated_channels["pressure_drop"] = {
+            "is_simulated": True,
+            "notice": pressure_channel.get("simulated_notice"),
+        }
+
+    model_provenance = None
+    if ml_channel is not None and ml_channel.get("model_note"):
+        model_provenance = {
+            "channel": "acoustic_ml",
+            "note": ml_channel.get("model_note"),
+            "is_synthetic": ml_channel.get("is_synthetic_model"),
+            "sklearn_warning": ml_channel.get("sklearn_warning"),
+        }
 
     plausibility = pipeline_result.get("plausibility") or {}
     # A withheld alarm is still something the operator must act on — a meter has
@@ -115,7 +160,10 @@ def build_response(pipeline_result, zone_names=None):
         "active_methods": fusion["active_methods"],
         "false_positive_warning": {
             "disclaimer": _DISCLAIMER,
-            "estimated_false_positive_rate": false_positive_rate
+            # None, not a number. An explicit empty state beats a plausible
+            # placeholder — see _FP_RATE_BASIS.
+            "estimated_false_positive_rate": None,
+            "basis": _FP_RATE_BASIS,
         },
         "work_order_summary": work_order,
         "sensor_fault": sensor_fault,
@@ -126,4 +174,15 @@ def build_response(pipeline_result, zone_names=None):
             "severity": tier
         },
         "water_c": pipeline_result.get("water_c"),
+        "mode": pipeline_result.get("mode"),
+        "channels": pipeline_result.get("channels"),
+        #: Non-empty only in mock. Keyed by method so a UI can look up the notice
+        #: for whatever channel it is about to draw.
+        "simulated_channels": simulated_channels,
+        #: When each channel crossed its threshold this episode. Lets the UI show
+        #: the ignition order across independent physics.
+        "channel_crossed_at": pipeline_result.get("channel_crossed_at") or {},
+        #: The acoustic_ml bundle's own `note`. Present whenever the channel
+        #: exists, so a confidence and its provenance always arrive together.
+        "model_provenance": model_provenance,
     }

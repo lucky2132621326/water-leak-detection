@@ -107,6 +107,18 @@ class ScenarioSpec:
     vib_baseline_mid: float = 0.030
     vib_per_leak_lpm: float = 0.055      # band_mid rise per L/min escaping
     vib_noise: float = 0.0025
+    #: Per-run mounting variance. A real accelerometer is zip-tied by hand, so
+    #: its absolute coupling to the pipe differs every time it is refitted —
+    #: which is exactly why the detector and the model both work on RATIOS. This
+    #: scales all band energies for the whole run, so a model that accidentally
+    #: learned absolute levels fails here instead of in front of a judge.
+    vib_mount_gain_spread: float = 0.35
+    #: Cavitation bursts: short, loud, broadband events with NO leak behind them.
+    #: Air coming out of solution at the pump inlet does this. They are the
+    #: acoustic channel's main false-positive source, so a mock corpus without
+    #: them overstates precision.
+    cavitation_burst_probability: float = 0.004
+    cavitation_burst_gain: float = 2.6
     emit_vibration: bool = True
     #: The piezo disc is optional hardware — a rig without one must still detect.
     emit_piezo: bool = True
@@ -117,6 +129,26 @@ class ScenarioSpec:
     water_c_start: float = 24.0
     water_c_rise_per_hour: float = 2.5
     emit_temp: bool = True
+
+    # --- SIMULATED pressure channel (MOCK ONLY) ------------------------------
+    # The physical rig has NO pressure transducer. These drive a generated
+    # channel that demonstrates how the system extends to pressure
+    # instrumentation, and every value is labelled SIMULATED downstream.
+    #
+    # The model is a pump curve: head falls as flow rises. A leak lowers
+    # hydraulic resistance, so flow rises AND pressure falls — the same physical
+    # event that shifts pump current. All three move together by construction
+    # (see generator._simulated_pressure), so they can never contradict.
+    emit_pressure: bool = True
+    #: Shut-off head, i.e. pressure at zero flow. A 12V diaphragm pump is well
+    #: under 1 bar; this is deliberately a realistic figure and not the 2.5 bar
+    #: the old fabricated channel claimed.
+    pressure_shutoff_bar: float = 0.85
+    #: Slope of the pump curve: bar lost per L/min of total throughput.
+    pressure_curve_slope: float = 0.058
+    #: Extra sag at the tee per L/min escaping, on top of the curve effect.
+    pressure_per_leak_lpm: float = 0.045
+    pressure_noise_bar: float = 0.004
 
     #: Wall-clock start, "HH:MM". Required to exercise MNF, which only evaluates
     #: between 01:00 and 05:00.

@@ -95,7 +95,36 @@ cusum:
   # minutes after the valve shut.
   cap_multiple: 2.0
 
+acoustic_ml:
+  # Supervised classifier on vibration signatures.
+  #
+  # The CODE default is FALSE (see AcousticMLDetector.__init__): with this key
+  # absent, the channel does not run. An ML detector must be switched on by
+  # someone who knows which bundle is loaded, never inherited silently.
+  #
+  # Set true here to opt this checkout in, which is what makes the mock-mode
+  # demonstration work end to end.
+  #
+  # This flag does NOT bypass the honesty gate. Live mode refuses any bundle
+  # whose note is not exactly 'trained on physical ground truth'
+  # (backend/detectors/acoustic_ml_detector.py). The bundle shipped today reads
+  # 'SYNTHETIC — not valid results', so it runs in mock and is refused in live
+  # no matter what this says.
+  enabled: true
+  bundle_path: "models/acoustic_clf-2.joblib"
+  # predict_proba at or above this counts as a positive frame.
+  probability_threshold: 0.7
+  # Consecutive positive frames before the channel alarms. Same discipline as
+  # every other detector — one noisy frame must not fire it.
+  persistence_samples: 5
+  # Full-flow reference used to bucket pump duty against the bundle's baseline.
+  # MUST match whatever the training notebook used to bucket its baseline, or
+  # every ratio feature is divided by the wrong number.
+  nominal_flow_lpm: 5.2
+
 acoustic:
+  # Full-flow reference for duty bucketing, matching acoustic_ml.
+  nominal_flow_lpm: 5.2
   # band_mid (50-150 Hz) must exceed this multiple of the rig's own clean
   # baseline. A RATIO, never an absolute: pump vibration dominates the absolute
   # energy and varies with duty, mounting and temperature.
@@ -152,16 +181,41 @@ plausibility:
 fusion:
   high_alarm_confidence: 0.75
   medium_alarm_confidence: 0.50
-  # Weights applied by backend/fusion/fusion_engine.py, renormalised over the
-  # detectors that can actually contribute so a rig missing the accelerometer
-  # scores on the same 0-1 scale.
+  # Applied by backend/fusion/fusion_engine.py and RENORMALISED over the
+  # detectors that actually contribute, so the effective weights always sum to
+  # 1.0 whatever the channel set is.
   #
-  # The two flow-independent channels (current_signature, acoustic) carry 0.44
-  # between them against 0.56 for the three flow-derived ones, because agreement
-  # ACROSS channels is stronger evidence than magnitude on any single one.
+  # The six LIVE channels below sum to exactly 1.00. Mock adds pressure_drop, so
+  # the divisor becomes 1.18 and every other channel scales down proportionally —
+  # correct, not a distortion: with more independent evidence available, any one
+  # channel is a smaller share of the total case.
+  #
+  # The flow-independent channels (current_signature, acoustic, acoustic_ml)
+  # carry 0.52 between them against 0.48 for the three flow-derived ones, because
+  # agreement ACROSS hardware is stronger evidence than magnitude on any single
+  # detector. Note acoustic and acoustic_ml share one accelerometer, so fusion
+  # counts them as ONE sensor group for the corroboration rule.
   weights:
     mass_balance: 0.30
-    current_signature: 0.22
+    current_signature: 0.20
     cusum: 0.16
-    mnf: 0.10
-    acoustic: 0.22
+    mnf: 0.08
+    acoustic: 0.13
+    acoustic_ml: 0.13
+    # MOCK ONLY — never contributes in live, because the detector is never
+    # constructed there.
+    pressure_drop: 0.18
+
+# SIMULATED pressure channel — MOCK MODE ONLY.
+#
+# The physical rig has no transducer: a 12V diaphragm pump develops under 1 bar
+# while affordable transducers are ranged 0-12 bar, so a real leak's pressure
+# signature would sit beneath the sensor's own noise floor. These tune the mock
+# channel that demonstrates how the system extends to pressure instrumentation.
+# Every value it produces is SIMULATED and labelled as such.
+pressure_drop:
+  min_drop_bar: 0.15
+  sigma_multiplier: 3.0
+  persistence_samples: 5
+  warmup_samples: 20
+  baseline_alpha: 0.02

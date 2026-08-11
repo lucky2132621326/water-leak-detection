@@ -181,6 +181,10 @@ const AlertRow: React.FC<{
   const urg = urgencyStyle(alert.impact?.urgency);
   const symbol = alert.impact?.currency_symbol ?? "₹";
   const fpRate = alert.false_positive_warning?.estimated_false_positive_rate;
+  // null now, always, until runs are scored against logged leak events. The old
+  // per-tier table (1/3/8/20%) was never measured — see _FP_RATE_BASIS in
+  // backend/response/response_builder.py.
+  const fpBasis = alert.false_positive_warning?.basis;
 
   return (
     <div className={`border rounded-2xl p-5 transition ${alert.status === "ACTIVE" ? "bg-white border-slate-200" : "bg-slate-50/70 border-slate-200/70"}`}>
@@ -269,7 +273,7 @@ const AlertRow: React.FC<{
       </div>
 
       {/* Work order + false-positive warning */}
-      {(alert.work_order_summary || fpRate !== undefined) && (
+      {(alert.work_order_summary || fpBasis) && (
         <div className="mt-4 space-y-2.5">
           {alert.work_order_summary?.summary && (
             <div className="bg-blue-50/60 border border-blue-100 rounded-xl px-3.5 py-3">
@@ -286,11 +290,13 @@ const AlertRow: React.FC<{
               </p>
             </div>
           )}
-          {fpRate !== undefined && (
+          {fpBasis && (
             <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 leading-relaxed">
-              <strong>Illustrative false-positive estimate ≈ {(fpRate * 100).toFixed(1)}%</strong> at {alert.confidence_tier} confidence
-              (not measured against a labeled validation set — see disclaimer).{" "}
-              {alert.false_positive_warning?.disclaimer}
+              <strong>
+                False-positive rate:{" "}
+                {fpRate == null ? "not yet measured" : `${(fpRate * 100).toFixed(1)}%`}
+              </strong>{" "}
+              at {alert.confidence_tier} confidence. {fpBasis}
             </p>
           )}
         </div>
