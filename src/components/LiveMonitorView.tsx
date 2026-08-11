@@ -12,6 +12,7 @@ interface LiveMonitorViewProps {
   onToggleLeak: (action: "OPEN" | "CLOSE", size?: number) => void;
   onTogglePump: (state: boolean) => void;
   onToggleAirBubbles: (state: boolean) => void;
+  readOnly?: boolean;
 }
 
 export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
@@ -20,7 +21,8 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
   onToggleLeak,
   onTogglePump,
   onToggleAirBubbles,
-  mode = "mock"
+  mode = "mock",
+  readOnly = false,
 }) => {
   const latest = latestTelemetry?.latest;
   const isPumpOn = latestTelemetry?.pump_on ?? true;
@@ -50,7 +52,7 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
+          {!readOnly && <div className="flex flex-wrap items-center gap-2.5">
             {/* Pump control only — leak injection now lives in the dedicated
                 bench below, which works identically in both operating modes. */}
             <button
@@ -64,11 +66,11 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
               {isPumpOn ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
               <span>{isPumpOn ? "Stop Pump (12V)" : "Start Pump"}</span>
             </button>
-          </div>
+          </div>}
         </div>
       </div>
 
-      <LeakBenchControls mode={mode} />
+      {!readOnly && <LeakBenchControls mode={mode} />}
 
       {/* Metric Cards Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-5">

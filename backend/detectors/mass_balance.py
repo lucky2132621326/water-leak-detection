@@ -11,7 +11,8 @@ from backend.detectors.residual import compute_residual
 
 
 class MassBalanceDetector:
-    def __init__(self, sigma_threshold=3.0, persistence_count=5, calibrated_sigma=None):
+    def __init__(self, sigma_threshold=3.0, persistence_count=5, calibrated_sigma=None,
+                 apply_bias=False):
         self.sigma_threshold = sigma_threshold
         self.persistence_count = persistence_count
         #: Sigma from the zero-leak calibration run. Used as the floor until the
@@ -22,10 +23,11 @@ class MassBalanceDetector:
             else thresholds_loader.get("calibration.sigma_lpm", 0.05))
         self.history = []
         self.consecutive_triggers = 0
+        self.apply_bias = apply_bias
 
     def process_sample(self, q_in, q_out, q_branch=0.0):
         # Topology-aware and bias-corrected — see backend/detectors/residual.py.
-        residual = compute_residual(q_in, q_out, q_branch)
+        residual = compute_residual(q_in, q_out, q_branch, apply_bias=self.apply_bias)
 
         # np.mean/np.std return numpy.float64; comparing against them yields
         # numpy.bool_, which json/FastAPI can't serialize (silently breaks the

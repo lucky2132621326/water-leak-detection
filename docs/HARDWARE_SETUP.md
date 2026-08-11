@@ -8,11 +8,11 @@
 | **Flow Sensor 2 (Outlet)** | GPIO 35 | Hall Effect Pulse (Input Interrupt) |
 | **Flow Sensor 3 (Branch)** | GPIO 32 | Hall Effect Pulse (Input Interrupt) |
 | **INA219 Current/Voltage** | GPIO 21 (SDA), GPIO 22 (SCL) | I2C Bus @ 400kHz |
-| **Pump Relay 1** | GPIO 25 | Active Low Relay Control |
-| **Leak Solenoid Relay 2** | GPIO 26 | Active Low Valve Control |
-| **Variable Servo Valve** | GPIO 27 | PWM Control (50Hz) |
+| **Pump P1 Relay** | GPIO 25 | Active-low supply-pump control |
+| **Pump P2 Relay** | GPIO 26 | Active-low demand-pump control |
+| **Branch A Pinch Servo** | GPIO 27 | PWM control (50Hz) |
 
 ## Power Wiring
 - **5V DC Line**: Powers ESP32, Relays, and Servo Motor (Separate 5V 3A Power Supply).
-- **12V DC Line**: Powers 12V Diaphragm Water Pump and 12V Solenoid Valves.
+- **12V DC Line**: Powers both 12V water pumps.
 - **Common Ground**: All DC grounds tied together at main distribution bus.

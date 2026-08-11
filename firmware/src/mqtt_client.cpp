@@ -19,12 +19,20 @@ static void handleMessage(char* topic, byte* payload, unsigned int length) {
         return;
     }
 
+    const bool hasPump1 = doc.containsKey("pump1");
+    const bool hasPump2 = doc.containsKey("pump2");
+    const bool hasServo = doc.containsKey("servo_deg");
+    if (!hasPump1 && !hasPump2 && !hasServo) {
+        Serial.println("[MQTT] command contains no supported fields — ignored");
+        return;
+    }
+
     // containsKey, not a defaulted read. A command that mentions only the servo
     // must not be interpreted as "and also stop both pumps".
     commandHandler(
-        doc.containsKey("pump1"), doc["pump1"] | false,
-        doc.containsKey("pump2"), doc["pump2"] | false,
-        doc.containsKey("servo_deg"), doc["servo_deg"] | 0);
+        hasPump1, doc["pump1"] | false,
+        hasPump2, doc["pump2"] | false,
+        hasServo, doc["servo_deg"] | 0);
 }
 
 void MQTTHandler::begin(CommandHandler handler) {
@@ -69,8 +77,20 @@ void MQTTHandler::reconnect() {
         // Last Will: if this node drops off without saying goodbye, the broker
         // publishes "offline" on the retained status topic. Without it the
         // dashboard cannot distinguish a dead rig from an idle one.
-        if (client.connect(DEVICE_ID, nullptr, nullptr, TOPIC_STATUS, 1, true, "offline")) {
-            client.subscribe(TOPIC_CMD);
+        char lastWill[128];
+        snprintf(lastWill, sizeof(lastWill),
+                 "{\"device\":\"%s\",\"status\":\"OFFLINE\"}", DEVICE_ID);
+        bool connected = false;
+        if (strlen(MQTT_USERNAME) > 0) {
+            connected = client.connect(
+                DEVICE_ID, MQTT_USERNAME, MQTT_PASSWORD,
+                TOPIC_STATUS, 1, true, lastWill);
+        } else {
+            connected = client.connect(
+                DEVICE_ID, TOPIC_STATUS, 1, true, lastWill);
+        }
+        if (connected) {
+            client.subscribe(TOPIC_CMD, 1);
             publishStatus("online");
             Serial.println("[MQTT] connected");
             return;
@@ -89,7 +109,20 @@ bool MQTTHandler::isConnected() {
 }
 
 void MQTTHandler::publishStatus(const char* state) {
-    client.publish(TOPIC_STATUS, state, true);   // retained
+    if (!client.connected()) return;
+    StaticJsonDocument<192> doc;
+    doc["device"] = DEVICE_ID;
+    doc["status"] = state;
+    doc["wifi_rssi"] = WiFi.RSSI();
+    doc["uptime_sec"] = millis() / 1000;
+    doc["heap_free"] = ESP.getFreeHeap();
+    char buffer[192];
+    const size_t n = serializeJson(doc, buffer);
+    client.publish(
+        TOPIC_STATUS,
+        reinterpret_cast<const uint8_t*>(buffer),
+        n,
+        true);
 }
 
 void MQTTHandler::publishTelemetry(double ts, bool clockSynced,
@@ -163,5 +196,9 @@ void MQTTHandler::publishTelemetry(double ts, bool clockSynced,
 
     char buffer[1024];
     const size_t n = serializeJson(doc, buffer);
-    client.publish(TOPIC_TELEMETRY, buffer, n);
+    client.publish(
+        TOPIC_TELEMETRY,
+        reinterpret_cast<const uint8_t*>(buffer),
+        n,
+        false);
 }

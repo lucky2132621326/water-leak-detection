@@ -7,7 +7,7 @@ interface DetectionEngineViewProps {
 
 const WEIGHT_ROWS = [
   { key: "mass_balance", label: "Mass Balance Weight", tone: "text-blue-600" },
-  { key: "pressure_drop", label: "Pressure Drop Weight", tone: "text-rose-600" },
+  { key: "acoustic", label: "Acoustic Weight", tone: "text-rose-600" },
   { key: "current_signature", label: "Motor Current Weight", tone: "text-purple-600" },
   { key: "mnf", label: "MNF Baseline Weight", tone: "text-amber-600" },
   { key: "cusum", label: "CUSUM Drift Weight", tone: "text-emerald-600" },
@@ -25,7 +25,7 @@ const THRESHOLD_LABELS: Record<string, string> = {
 interface PlausibilityGuardConfig {
   enabled: boolean;
   current_ma_per_leak_lpm: number;
-  pressure_bar_per_leak_lpm: number;
+  acoustic_min_residual_lpm: number;
   margin: number;
   min_residual_lpm: number;
   rule: string;
@@ -57,7 +57,7 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
   const currentSig = detectors?.current_signature;
   const mnf = detectors?.mnf;
   const cusum = detectors?.cusum;
-  const pressureDrop = detectors?.pressure_drop;
+  const acoustic = detectors?.acoustic;
 
   return (
     <div className="space-y-6">
@@ -242,18 +242,18 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           </div>
         </div>
 
-        {/* 5. Pressure Drop — only present when the rig has a real transducer */}
+        {/* 5. Acoustic signature — optional when no vibration sensor is fitted */}
         <div className={`bg-white border rounded-2xl p-5 shadow-xs transition ${
-          Boolean(pressureDrop?.is_alarm) ? "border-rose-300 bg-rose-50/30" : "border-slate-200/80"
+          Boolean(acoustic?.is_alarm) ? "border-rose-300 bg-rose-50/30" : "border-slate-200/80"
         }`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
               <Gauge className="w-4 h-4 text-rose-600" />
-              <h3 className="text-sm font-bold text-slate-900">Pressure Drop</h3>
+              <h3 className="text-sm font-bold text-slate-900">Acoustic Signature</h3>
             </div>
-            {!pressureDrop?.active ? (
+            {!acoustic?.active ? (
               <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">INACTIVE</span>
-            ) : Boolean(pressureDrop?.is_alarm) ? (
+            ) : Boolean(acoustic?.is_alarm) ? (
               <span className="text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-full font-bold">ALARM</span>
             ) : (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">OK</span>
@@ -261,26 +261,26 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
           </div>
           <div className="space-y-2 text-xs">
             <div className="flex justify-between text-slate-500">
-              <span>Line Pressure:</span>
+              <span>Mid-band Energy:</span>
               <span className="font-mono text-slate-900 font-bold">
-                {pressureDrop?.pressure_bar != null ? `${pressureDrop.pressure_bar} bar` : "—"}
+                {acoustic?.band_mid != null ? Number(acoustic.band_mid).toFixed(3) : "—"}
               </span>
             </div>
             <div className="flex justify-between text-slate-500">
-              <span>Baseline / Drop:</span>
+              <span>Ratio / Threshold:</span>
               <span className="font-mono text-slate-700 font-semibold">
-                {pressureDrop?.baseline_bar != null ? `${pressureDrop.baseline_bar} / ${pressureDrop.drop_bar}` : "—"}
+                {acoustic?.ratio != null ? `${Number(acoustic.ratio).toFixed(2)} / ${Number(acoustic.ratio_threshold).toFixed(2)}` : "—"}
               </span>
             </div>
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center">
               <span className="text-slate-500 font-medium">Channel Confidence:</span>
               <span className="font-extrabold text-rose-600">
-                {((pressureDrop?.confidence ?? 0) * 100).toFixed(1)}%
+                {((acoustic?.confidence ?? 0) * 100).toFixed(1)}%
               </span>
             </div>
-            {!pressureDrop?.active && (
+            {!acoustic?.active && (
               <p className="text-[10px] text-slate-400 leading-snug pt-1">
-                No measured pressure — inactive so it cannot double-count the flow signal.
+                No vibration sample — the fusion engine redistributes this channel's weight.
               </p>
             )}
           </div>
@@ -355,9 +355,9 @@ export const DetectionEngineView: React.FC<DetectionEngineViewProps> = ({ evalua
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Pressure per L/min</span>
+                <span className="text-slate-400 font-medium">Acoustic veto floor</span>
                 <span className="font-mono font-bold text-slate-700">
-                  {config.plausibility_guard.pressure_bar_per_leak_lpm} bar
+                  {config.plausibility_guard.acoustic_min_residual_lpm} L/min
                 </span>
               </div>
               <div className="flex justify-between">

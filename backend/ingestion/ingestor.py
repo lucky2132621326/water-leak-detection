@@ -126,6 +126,8 @@ class TelemetryIngestor:
         self.latest_response = None
         self.latest_telemetry = None
         self.latest_flat = None
+        self.latest_received_at = None
+        self.latest_device_status = None
         self.history = []
         self.rejected_count = 0
         self.sample_count = 0
@@ -179,6 +181,8 @@ class TelemetryIngestor:
             self.latest_response = None
             self.latest_telemetry = None
             self.latest_flat = None
+            self.latest_received_at = None
+            self.latest_device_status = None
             self.history = []
             self.rejected_count = 0
             self.sample_count = 0
@@ -253,6 +257,7 @@ class TelemetryIngestor:
             self.latest_response = response
             self.latest_telemetry = raw
             self.latest_flat = flatten_sample(raw, response, leak_active=leak_active)
+            self.latest_received_at = time.time()
             self.history.append(self.latest_flat)
             if len(self.history) > HISTORY_LIMIT:
                 self.history.pop(0)
@@ -268,6 +273,11 @@ class TelemetryIngestor:
         self.alerts.ingest(response, source=self.source_name, run_id=effective_run_id)
         return response
 
+    def update_device_status(self, status: dict):
+        """Record retained ESP32 presence/health without treating it as telemetry."""
+        with self._lock:
+            self.latest_device_status = dict(status or {})
+
     def _leak_window_open(self, ts: float, run_id: str) -> bool:
         """Is an operator-logged leak window open at `ts`?
 
@@ -279,11 +289,27 @@ class TelemetryIngestor:
         if not self.persist:
             return False
         try:
+            # Live experiment state changes after a run has started. Consult the
+            # in-process operator log first so opening a clamp is reflected on
+            # the very next sample instead of being hidden by the per-run cache.
+            live_event = get_experiment_service().active_leak_event
+            if (live_event and live_event.get("is_active")
+                    and live_event.get("run_id") == run_id):
+                opened = live_event.get("open_ts", live_event.get("start_ts"))
+                if opened is not None and float(opened) <= ts:
+                    return True
+
             if run_id != self._gt_run_id:
                 self._gt_run_id = run_id
-                self._gt_windows = self.leak_event_repo.open_events(run_id=run_id)
-            return any(w.get("open_ts", 0) <= ts and w.get("close_ts") is None
-                       for w in self._gt_windows)
+                self._gt_windows = self.leak_event_repo.get_for_run(run_id=run_id)
+            return any(
+                float(w.get("open_ts", w.get("start_ts", 0))) <= ts
+                and (
+                    w.get("close_ts", w.get("stop_ts")) is None
+                    or ts <= float(w.get("close_ts", w.get("stop_ts")))
+                )
+                for w in self._gt_windows
+            )
         except Exception:
             return False
 
@@ -296,6 +322,8 @@ class TelemetryIngestor:
                 "sample_count": self.sample_count,
                 "rejected_count": self.rejected_count,
                 "clock_substituted_count": self.clock_substituted_count,
+                "latest_received_at": self.latest_received_at,
+                "device_status": self.latest_device_status,
             }
 
     def recent_history(self):

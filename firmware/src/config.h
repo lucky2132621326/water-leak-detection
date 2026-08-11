@@ -10,9 +10,19 @@
 // =============================================================================
 
 // --- WiFi / MQTT -------------------------------------------------------------
-#define WIFI_SSID       "YOUR_SSID"
-#define WIFI_PASSWORD   "YOUR_PASSWORD"
-#define MQTT_HOST       "192.168.1.100"
+// Copy secrets.example.h to secrets.h. The real file is git-ignored so rig
+// credentials cannot be exposed through the repository or judge dashboard.
+#include "secrets.h"
+
+#ifndef MQTT_USERNAME
+#define MQTT_USERNAME ""
+#endif
+#ifndef MQTT_PASSWORD
+#define MQTT_PASSWORD ""
+#endif
+
+#define WIFI_PASSWORD   WIFI_PASS
+#define MQTT_HOST       MQTT_BROKER
 #define MQTT_PORT       1883
 #define DEVICE_ID       "esp32-rig-01"
 
@@ -82,6 +92,7 @@
 
 #define PIEZO_SAMPLE_RATE_HZ 2000
 #define PIEZO_SAMPLE_MS      250
+#define PIEZO_SAMPLE_COUNT   ((PIEZO_SAMPLE_RATE_HZ * PIEZO_SAMPLE_MS) / 1000)
 
 // --- Safety interlocks (spec Part H) — must not depend on the network --------
 // No command for this long and both pumps stop. A dry-run destroys the pump, so

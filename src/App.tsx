@@ -16,7 +16,7 @@ import { SettingsView } from "./components/SettingsView";
 import { ImpactSimulatorView } from "./components/ImpactSimulatorView";
 import { LeakHistoryView } from "./components/LeakHistoryView";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
-import type { AlertsSummary, SavingsSummary, LeakAlert, OperatingMode } from "./types";
+import type { AlertsSummary, SavingsSummary, LeakAlert, OperatingMode, RuntimeCapabilities } from "./types";
 import type { SystemStatus } from "./components/SystemStatusRow";
 
 export default function App() {
@@ -30,6 +30,7 @@ export default function App() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [recentAlerts, setRecentAlerts] = useState<LeakAlert[]>([]);
   const [scenarioName, setScenarioName] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState<RuntimeCapabilities | null>(null);
 
   // Fetch Health & Live Telemetry State
   const fetchState = () => {
@@ -46,6 +47,9 @@ export default function App() {
       .then((data) => setLatestTelemetry(data))
       .catch((err) => console.error(err));
 
+  };
+
+  const fetchHistory = () => {
     fetch("/api/telemetry/history")
       .then((res) => res.json())
       .then((data) => {
@@ -80,11 +84,26 @@ export default function App() {
       .then((res) => res.json())
       .then((data) => setRecentAlerts(Array.isArray(data) ? data : []))
       .catch(() => undefined);
+
+    fetch("/api/mode")
+      .then((res) => res.json())
+      .then((data) => setScenarioName(data?.source?.scenario?.name ?? null))
+      .catch(() => undefined);
   };
 
   useEffect(() => {
+    fetch("/api/runtime-capabilities")
+      .then((res) => res.json())
+      .then(setCapabilities)
+      .catch(() => setCapabilities({ audience: "operator", read_only: false, mutations_allowed: true }));
     fetchState();
+    fetchHistory();
     const interval = setInterval(fetchState, 1000); // 1Hz live telemetry polling
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(fetchHistory, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -96,12 +115,8 @@ export default function App() {
 
     // Which mock scenario is streaming — shown on the Dashboard instead of a
     // stale stored run id.
-    fetch("/api/mode")
-      .then((res) => res.json())
-      .then((d) => setScenarioName(d?.source?.scenario?.name ?? null))
-      .catch(() => undefined);
-
   const activeAlertCount = alertsSummary?.counts.active ?? 0;
+  const readOnly = capabilities?.read_only ?? true;
 
   const handleToggleLeak = (action: "OPEN" | "CLOSE", size?: number) => {
     fetch("/api/leak/toggle", {
@@ -159,21 +174,28 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         unreadAlertsCount={activeAlertCount}
+        readOnly={readOnly}
       />
 
       {/* 2. Main Right Container */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Header */}
         <Header
-          systemOnline={health?.status === "ok" || true}
+          systemOnline={health?.status === "ok"}
           unreadCount={activeAlertCount}
           onOpenAlerts={() => setActiveTab("alerts")}
           mode={mode}
           onToggleMode={handleToggleMode}
+          readOnly={readOnly}
         />
 
         {/* View Content Body */}
         <main className="flex-1 p-8 max-w-[1600px] w-full mx-auto">
+          {readOnly && capabilities?.audience === "judge" && (
+            <div className="mb-5 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-xs font-bold tracking-wide text-cyan-900">
+              LIVE JUDGE VIEW · READ-ONLY — telemetry and evidence are live; operator controls remain on the rig laptop.
+            </div>
+          )}
           {/* Keyed on the active tab so navigating away from a failed view clears
               the error rather than stranding the operator on it. */}
           <ViewErrorBoundary resetKey={activeTab}>
@@ -186,11 +208,12 @@ export default function App() {
               onTogglePump={handleTogglePump}
               impact={latestTelemetry?.impact}
               savings={savings}
-              onAnalyzeImpact={() => setActiveTab("impact-simulator")}
+              onAnalyzeImpact={readOnly ? undefined : () => setActiveTab("impact-simulator")}
               systemStatus={systemStatus}
               evaluation={latestTelemetry?.evaluation}
               alerts={recentAlerts}
               scenarioName={scenarioName}
+              readOnly={readOnly}
             />
           )}
 
@@ -202,6 +225,7 @@ export default function App() {
               onTogglePump={handleTogglePump}
               onToggleAirBubbles={handleToggleAirBubbles}
               mode={mode}
+              readOnly={readOnly}
             />
           )}
 
@@ -225,7 +249,7 @@ export default function App() {
 
           {activeTab === "reports" && <ReportsView />}
 
-          {activeTab === "alerts" && <AlertsView />}
+          {activeTab === "alerts" && <AlertsView readOnly={readOnly} />}
 
           {activeTab === "leak-history" && <LeakHistoryView />}
 

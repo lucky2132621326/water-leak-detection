@@ -57,8 +57,8 @@ Full detail: `docs/OPERATING_MODES.md`.
 | `backend/analytics/benchmark_analytics.py` | computed metrics/ROC (replaced hardcoded modules) |
 | `backend/benchmark/` | `BenchmarkScorer` (was `ReplayRunner`) — offline scoring only |
 | `backend/reports/` | printable experiment reports (inline SVG, no PDF lib) |
-| `backend/detectors/pressure_drop_detector.py` | 5th detector |
-| `firmware/src/pressure_sensor.{h,cpp}` | analog transducer, GPIO 36 |
+| `backend/detectors/acoustic_detector.py` | independent vibration/acoustic detector |
+| `firmware/src/vibration_sensor.{h,cpp}` | MPU6050 FFT + optional piezo acquisition |
 
 ### Deleted
 `backend/mqtt/`, `backend/replay/`, `simulation/`, `ReplayPlayer`,
@@ -103,13 +103,11 @@ All replaced with computed/observed values. Real CP-SAT scheduling (OR-Tools)
 replaced a fake round-robin. Config reconciled: `settings.yaml` had `database:`
 and `detector:` blocks nothing read that contradicted the live values.
 
-### D. Pressure sensor, end to end
-Firmware driver on GPIO 36 (ADC1 — survives WiFi), oversampled + EMA smoothed,
-**omits `pressure_bar` entirely on sensor fault** rather than publishing `0.0`
-(which would look like a pressure collapse). New `PressureDropDetector` scores
-**only measured** pressure — never estimated, which would double-count the flow
-signal. Fusion **renormalises weights over contributing detectors**, so a rig
-without a transducer scores on the identical 0–1 scale as before.
+### D. Honest pressure handling
+The physical rig has no pressure transducer. Firmware does not publish
+`pressure_bar`, and the backend labels any flow-derived pressure as an estimate
+for explanatory display only. It is not treated as independent detection
+evidence because that would count the flow signal twice.
 
 ### E. Two modes replacing Replay
 Replay removed as an operating mode. `ReplayRunner` → `BenchmarkScorer` (kept —
@@ -144,7 +142,7 @@ Mock. New `LeakBenchControls` component + custom scenario builder.
 
 ## 5. Current state
 
-- **141 Python tests pass**, `tsc` clean, production build succeeds, self-test
+- **153 Python tests pass**, `tsc` clean, production build succeeds, self-test
   passes all 6 modules, all 14 dashboard tabs render with zero console errors.
 - **11/11 mock scenarios pass** — and the pass rate is now enforced by
   `tests/test_scenarios.py` rather than recorded here. A number in a document
@@ -154,8 +152,8 @@ Mock. New `LeakBenchControls` component + custom scenario builder.
   recovered.
 
 ### Test files
-`test_impact.py` (19), `test_alert_service.py` (23), `test_telemetry_ingestion.py`
-(22), `test_pressure_detector.py` (15), `test_scheduler.py` (12),
+`test_impact.py`, `test_alert_service.py`, `test_telemetry_ingestion.py`,
+`test_scheduler.py`,
 `test_scenarios.py` (4, covering all 10 graded scenarios via subtests),
 `test_plausibility.py` (15), `test_detector_recovery.py` (8),
 `test_clock_integrity.py` (10), `test_localization.py` (6),
@@ -172,12 +170,11 @@ decision was taken: a physical plausibility guard
 missing corroboration. See `docs/CHANGELOG.md`. 11/11 scenarios now pass with
 every leak scenario's recall bit-identical.
 
-**1a. Calibrate the guard's two constants against the real rig.** They currently
-hold the mock's physics (`35.0` mA and `0.35` bar per L/min). Measure them: open
-a known leak, record how far pump current and line pressure actually move. Wrong
-values do not cause false alarms — they cost sensitivity to instrument faults —
-and setting either to `0` disables that channel's veto. In
-`backend/config/thresholds.yaml` under `plausibility:`.
+**1a. Calibrate the guard against the real rig.** Its current-signature factor
+and acoustic veto floor currently reflect the mock model. Open a known leak and
+record pump-current movement and 50–150 Hz acoustic response. Wrong values can
+cost sensitivity to instrument faults, so tune them under `plausibility:` in
+`backend/config/thresholds.yaml` before calling the guard field-validated.
 
 **1b. `min_residual_lpm` (0.75) has not been tuned.** It is a hard floor below
 which the guard never vetoes, protecting small leaks from a mis-set constant.
@@ -193,21 +190,23 @@ publish an explicit `clock_synced` flag, or withhold telemetry until NTP
 completes. Watch that counter on first bring-up — a non-zero value means the rig
 never got its clock.
 
-**2. Pressure sensor untested against real hardware.** Validated against the
-payload the firmware constructs, not a physical transducer. When wiring, confirm
-`PRESSURE_DIVIDER_RATIO` matches the fitted resistors (1.5 for 10k/20k) — if
-wrong, every reading is proportionally wrong. See `firmware/docs/PINOUT.md`.
+**2. Acoustic sensors remain unvalidated on the assembled rig.** Confirm the
+MPU6050 mounting and optional piezo channel produce stable clean baselines before
+tuning acoustic thresholds. Missing sensors remain inactive rather than
+publishing fake zero readings.
 
 **3. Live Sensor Mode untested against a real rig.** No ESP32 or broker
 available here. On first bring-up watch the backend log for
 `[Ingestor:live] rejected telemetry:` — silence means packets are landing.
 
-**4. Firmware still does not publish `servo_deg`.** The mock does; the DTO parses
-it optionally. Adding it firmware-side would improve live localization.
+**4. Firmware credentials and broker ACLs must be provisioned on the demo
+network.** Keep the device and backend accounts separate and never expose port
+1883 through the public tunnel.
 
-**5. `solenoid_state` ground truth is captured but live runs need grouping** to
-be scoreable — `ExperimentService` start/stop-run exists and stamps `run_id`,
-but the workflow hasn't been exercised on hardware.
+**5. Manual clamp ground truth needs a full hardware rehearsal.**
+`ExperimentService` start/stop-run persists the operator-recorded leak window
+and stamps `run_id`, but the complete workflow still needs to be exercised on
+the assembled rig.
 
 **6. Four dashboard panels remain partly cosmetic** — pump/air-bubble controls
 are live-only (generator doesn't model them) and say so when refused.
@@ -222,9 +221,9 @@ are live-only (generator doesn't model them) and say so when refused.
   by relative path and silently falls back to defaults otherwise.
 - **Only one MongoDB on 27017.** `lsof -i :27017 -sTCP:LISTEN -P -n` — more than
   one listener means the silent-shadowing failure in §4.
-- **`.env.example` is reference only** — nothing calls `load_dotenv()`; export
-  vars into the shell if you need overrides.
-- `server.ts` hardcodes `PORT = 3000` and ignores the env var.
+- Node loads `.env` through `dotenv/config`; the public-demo launcher also
+  validates required configuration before starting processes.
+- `server.ts` honors `PORT`, `HOST`, and `DASHBOARD_AUDIENCE`.
 
 ---
 

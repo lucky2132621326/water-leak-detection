@@ -13,6 +13,7 @@ from backend.repositories.telemetry_repository import TelemetryRepository
 from backend.repositories.detection_repository import LeakEventRepository, DetectionRepository
 from backend.pipeline import DetectionPipeline
 from backend.response.response_builder import build_response
+from backend.benchmark.ground_truth import GroundTruthScorer
 from backend.utils.logger import logger
 
 
@@ -31,8 +32,7 @@ class BenchmarkScorer:
             return {"run_id": run_id, "samples": 0, "metrics": None}
 
         pipeline = DetectionPipeline()
-        tp = fp = fn = tn = 0
-        detected_ts_by_event = {}
+        scorer = GroundTruthScorer(ground_truth)
 
         for doc in telemetry_docs:
             flow = doc["flow"]
@@ -52,49 +52,16 @@ class BenchmarkScorer:
             response = build_response(result)
             self.detection_repo.save_response(response, run_id=run_id)
 
-            is_detected = response["is_alarm"]
-            matching_event = next(
-                (gt for gt in ground_truth if gt["start_ts"] <= doc["ts"] <= (gt.get("stop_ts") or doc["ts"] + 1)),
-                None
-            )
-
-            if is_detected and matching_event:
-                tp += 1
-                key = str(matching_event["_id"])
-                if key not in detected_ts_by_event:
-                    detected_ts_by_event[key] = doc["ts"]
-            elif is_detected and not matching_event:
-                fp += 1
-            elif not is_detected and matching_event:
-                fn += 1
-            else:
-                tn += 1
+            scorer.observe(doc["ts"], response["is_alarm"])
 
             if on_sample:
                 on_sample(response)
 
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 1.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-
-        latencies = [
-            detected_ts_by_event[str(gt["_id"])] - gt["start_ts"]
-            for gt in ground_truth
-            if str(gt["_id"]) in detected_ts_by_event
-        ]
-        avg_latency_sec = round(sum(latencies) / len(latencies), 2) if latencies else None
+        metrics = scorer.summary()
+        metrics["avg_latency_sec"] = metrics["detection_latency_sec"]
 
         return {
             "run_id": run_id,
             "samples": len(telemetry_docs),
-            "metrics": {
-                "precision": round(precision, 3),
-                "recall": round(recall, 3),
-                "f1_score": round(f1, 3),
-                "true_positives": tp,
-                "false_positives": fp,
-                "false_negatives": fn,
-                "true_negatives": tn,
-                "avg_latency_sec": avg_latency_sec,
-            }
+            "metrics": metrics,
         }

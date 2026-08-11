@@ -12,3 +12,7 @@ __pycache__/
 venv/
 .pio/
 .vscode/
+firmware/src/secrets.h
+data/
+backend/calibration/calibration_data.json
+.tools/

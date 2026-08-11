@@ -19,8 +19,17 @@ class ConfigLoader:
     def load_config(self, filepath: str = "backend/config/settings.yaml"):
         if os.path.exists(filepath):
             try:
-                with open(filepath, 'r') as f:
+                with open(filepath, 'r', encoding='utf-8') as f:
                     self._config = yaml.safe_load(f)
+                    mqtt = self._config.setdefault("mqtt", {})
+                    if os.getenv("MQTT_HOST"):
+                        mqtt["host"] = os.environ["MQTT_HOST"]
+                    if os.getenv("MQTT_PORT"):
+                        mqtt["port"] = int(os.environ["MQTT_PORT"])
+                    if os.getenv("MQTT_USERNAME"):
+                        mqtt["username"] = os.environ["MQTT_USERNAME"]
+                    if os.getenv("MQTT_PASSWORD"):
+                        mqtt["password"] = os.environ["MQTT_PASSWORD"]
                     logger.info(f"Loaded dynamic configuration from {filepath}")
             except Exception as e:
                 logger.error(f"Error loading {filepath}: {e}, using default fallback")
@@ -34,7 +43,11 @@ class ConfigLoader:
         # settings.yaml because nothing read them and their values contradicted
         # the ones actually in force — see the notes in settings.yaml.
         return {
-            "mqtt": {"host": "localhost", "port": 1883, "topic": "rig/telemetry", "cmd_topic": "rig/cmd"},
+            "mqtt": {
+                "host": "localhost", "port": 1883, "topic": "rig/telemetry",
+                "status_topic": "rig/status", "cmd_topic": "rig/cmd",
+                "username": "", "password": "",
+            },
         }
 
     def get(self, key_path: str, default=None):
@@ -65,7 +78,7 @@ class ThresholdsLoader:
 
     def load(self, filepath: str = "backend/config/thresholds.yaml"):
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 self._thresholds = yaml.safe_load(f)
                 logger.info(f"Loaded detector thresholds from {filepath}")
         except Exception as e:
@@ -106,7 +119,7 @@ class ImpactLoader:
 
     def load(self, filepath: str = "backend/config/impact.yaml"):
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 self._impact = yaml.safe_load(f)
                 logger.info(f"Loaded impact configuration from {filepath}")
         except Exception as e:

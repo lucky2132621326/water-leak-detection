@@ -12,8 +12,8 @@ on **contradiction**, not on missing corroboration.
   drop, under the detector's 25 mA threshold, so that channel is *correct* to
   stay quiet. Vetoing on silence suppresses the leaks the system exists to find.
 - **What it does instead.** It predicts what each independent channel *should*
-  read if the flow claim were true — `residual × current_ma_per_leak_lpm`,
-  `residual × pressure_bar_per_leak_lpm`. A channel may veto only when the
+  read if the flow claim were true: a current shift proportional to residual,
+  plus an acoustic response above the configured floor. A channel may veto only when the
   predicted effect clears its own threshold by `margin` (2.0) and it still reads
   baseline. A dropout claims 5.2 L/min, requiring a 183 mA drop; 10 mA was
   observed. That is positive evidence of an instrument fault.
@@ -190,7 +190,7 @@ leak using flow alone, and mass balance and CUSUM both consume the same residual
 so two "agreeing" detectors trip fusion. Left visible rather than silenced.
 
 
-## [2026-08-10] — Honesty pass, pressure sensor, real solvers
+## [2026-08-10] — Honesty pass, sensor fusion, real solvers
 
 A full audit found the dashboard was roughly half live data and half leftover
 mockup, with several panels stating things that were not merely stale but
@@ -247,23 +247,13 @@ false. Everything below is now computed or observed.
 - Calibration and self-test buttons now hit `/api/calibration` and
   `/api/self-test`; the latter runs the real `system_self_test.py`.
 
-### Pressure sensor (new hardware capability)
-- `firmware/src/pressure_sensor.{h,cpp}` — analog transducer driver on GPIO 36
-  (ADC1, so it survives WiFi being active), with oversampling, EMA smoothing,
-  and a health floor. Publishes `pressure_bar`, and **omits the key entirely**
-  on sensor fault rather than sending `0.0`, which would look like a pressure
-  collapse and could raise a false alarm.
-- `backend/detectors/pressure_drop_detector.py` — a fifth detector satisfying
-  the problem statement's "abnormal pressure drops" requirement. It scores
-  **only measured** pressure; on estimated or logged values it reports inactive,
-  because estimated pressure is derived from the same flow numbers the mass
-  balance detector already uses and scoring it would manufacture agreement
-  between two views of one measurement.
-- Fusion now **renormalises weights over contributing detectors**, so a rig
-  without a transducer scores on exactly the same 0–1 scale as before
-  (0.40/0.25/0.20/0.15 falls out of the new weights automatically). Without
-  this, adding a fifth detector would have quietly desensitised every existing
-  rig.
+### Acoustic channel and honest pressure handling
+- The fifth channel is the MPU6050/piezo acoustic signature, not a pressure
+  transducer. Missing acoustic hardware reports inactive and its fusion weight
+  is redistributed across contributing detectors.
+- The rig has no physical pressure sensor. Any derived pressure is labelled
+  estimated and is never scored as independent evidence, avoiding fabricated
+  agreement with the mass-balance signal.
 
 ### Real CP-SAT scheduling
 - `cp_sat_scheduler.py` was `crews[idx % len(crews)]` with a hardcoded start

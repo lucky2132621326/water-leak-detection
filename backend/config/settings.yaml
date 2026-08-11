@@ -13,12 +13,14 @@ mqtt:
   host: "localhost"
   port: 1883
   topic: "rig/telemetry"
+  status_topic: "rig/status"
   cmd_topic: "rig/cmd"
+  username: ""
+  password: ""
 
 # DATABASE — not configured here.
-#   backend/repositories/db.py reads the MONGO_URI and MONGO_DB_NAME environment
-#   variables, defaulting to mongodb://localhost:27017/water_leak_detection,
-#   which is what `docker compose up` publishes. See .env.example.
+#   backend/repositories/db.py reads MONGO_URI plus MONGO_DB_LIVE/MONGO_DB_MOCK,
+#   defaulting to jal_netra_live and jal_netra_mock. See .env.example.
 #
 # DETECTOR THRESHOLDS — not configured here.
 #   backend/detectors/detector_manager.py reads backend/config/thresholds.yaml.

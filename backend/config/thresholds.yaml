@@ -33,7 +33,7 @@ calibration:
   #         systematic mismatch between two physically different meters.
   # sigma = standard deviation over that same run. THE FOUNDATION OF DETECTION —
   #         every threshold below is expressed as a multiple of it.
-  bias_lpm: 0.0
+  bias_lpm: 0.02
   sigma_lpm: 0.05
 
   # sigma is flow-dependent. Where multiple calibration points exist, list them

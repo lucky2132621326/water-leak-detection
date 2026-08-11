@@ -41,10 +41,10 @@ export const WorkOrderSchedulerView: React.FC = () => {
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs">
         <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2 tracking-tight">
           <Calendar className="w-6 h-6 text-emerald-600" />
-          <span>Phase 4: Field Repair Crew Work Order CP-SAT Scheduler</span>
+          <span>Field Verification Work Orders</span>
         </h2>
         <p className="text-xs text-slate-500 mt-1">
-          OR-Tools CP-SAT constraint optimization matching detected leak severity, crew skill requirements, and travel time.
+          Converts indicative leak evidence into an auditable inspection brief; no operational control action is issued.
         </p>
       </div>
 
@@ -97,7 +97,7 @@ export const WorkOrderSchedulerView: React.FC = () => {
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl text-xs transition flex items-center justify-center space-x-2 shadow-md shadow-emerald-600/20"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>Optimize & Dispatch Order</span>
+              <span>Optimize & Save Work Order</span>
             </button>
           </form>
         </div>
@@ -105,7 +105,7 @@ export const WorkOrderSchedulerView: React.FC = () => {
         {/* Right: Active Work Orders List */}
         <div className="lg:col-span-2 bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
           <h3 className="text-sm font-bold text-slate-900 flex items-center justify-between">
-            <span>Dispatched Work Orders</span>
+            <span>Saved Work Orders</span>
             <span className="text-xs text-slate-500 font-semibold bg-slate-100 px-2.5 py-0.5 rounded-full">{workOrders.length} Active</span>
           </h3>
 

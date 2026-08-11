@@ -109,7 +109,7 @@ export const SystemHealthView: React.FC = () => {
           <div className="space-y-2 text-xs font-mono">
             <div className="flex justify-between text-slate-500 font-medium">
               <span>Database Name:</span>
-              <span className="text-emerald-700 font-bold">water_leak_detection</span>
+              <span className="text-emerald-700 font-bold">Mode-scoped MongoDB</span>
             </div>
             <div className="flex justify-between text-slate-500 font-medium">
               <span>Collections:</span>

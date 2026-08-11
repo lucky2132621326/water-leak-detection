@@ -30,7 +30,8 @@ class DetectorManager:
     def __init__(self):
         self.mass_balance_detector = MassBalanceDetector(
             sigma_threshold=thresholds_loader.get("mass_balance.sigma_threshold", 3.0),
-            persistence_count=thresholds_loader.get("mass_balance.persistence_seconds", 5)
+            persistence_count=thresholds_loader.get("mass_balance.persistence_seconds", 5),
+            apply_bias=True,
         )
         self.current_detector = CurrentSignatureDetector(
             baseline_ma=thresholds_loader.get("current_signature.baseline_ma", 420.0),
@@ -49,7 +50,7 @@ class DetectorManager:
 
     def process_sample(self, ts, q_in, q_out, q_branch, current_ma, bus_v=12.0,
                        vibration=None, pump_on=True):
-        residual = compute_residual(q_in, q_out, q_branch)
+        residual = compute_residual(q_in, q_out, q_branch, apply_bias=True)
 
         mb_res = self.mass_balance_detector.process_sample(q_in, q_out, q_branch)
         mb_res["method"] = "mass_balance"

@@ -38,6 +38,27 @@ class DetectionRepository(ModeScopedRepository):
 class LeakEventRepository(ModeScopedRepository):
     """Operator-logged physical leak windows — the project's ground truth."""
 
+    def create_event(self, start_ts, location_node, severity_lpm, run_id=None,
+                     is_ground_truth=False, notes="", metadata=None):
+        """Persist the event shape used by the live experiment API.
+
+        The repository accepts both this legacy ``start_ts`` shape and the
+        hardware-spec ``open_ts`` shape; scoring normalizes either form.
+        """
+        doc = self.stamp({
+            "start_ts": start_ts,
+            "stop_ts": None,
+            "location_node": location_node,
+            "severity_lpm": severity_lpm,
+            "run_id": run_id,
+            "is_ground_truth": is_ground_truth,
+            "notes": notes,
+            "metadata": metadata or {},
+        })
+        result = self.db.leak_events.insert_one(doc)
+        doc["_id"] = result.inserted_id
+        return doc
+
     def open_event(self, open_ts, tee_id, clamp_turns, leak_lpm,
                    demand_mode="steady", run_id=None, notes="", source="operator"):
         """Record that a physical leak was opened.
@@ -72,10 +93,17 @@ class LeakEventRepository(ModeScopedRepository):
         logger.info(f"[LeakEvents] closed {event_id} at {close_ts}")
 
     def open_events(self, run_id=None):
-        return list(self.db.leak_events.find({"run_id": run_id, "close_ts": None}))
+        return list(self.db.leak_events.find({
+            "run_id": run_id,
+            "$or": [
+                {"open_ts": {"$exists": True}, "close_ts": None},
+                {"start_ts": {"$exists": True}, "stop_ts": None},
+            ],
+        }))
 
     def get_for_run(self, run_id):
-        return list(self.db.leak_events.find({"run_id": run_id}).sort("open_ts", 1))
+        rows = list(self.db.leak_events.find({"run_id": run_id}))
+        return sorted(rows, key=lambda row: row.get("open_ts", row.get("start_ts", 0)))
 
     def list_recent(self, limit=100):
         return list(self.db.leak_events.find({}).sort("open_ts", -1).limit(int(limit)))

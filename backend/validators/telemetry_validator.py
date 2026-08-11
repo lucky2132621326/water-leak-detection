@@ -34,9 +34,10 @@ class TelemetryValidator:
     @staticmethod
     def _has_flow_fields(raw_data: dict) -> bool:
         flow = raw_data.get("flow")
-        return isinstance(flow, dict) and any(
-            k in flow for k in ("q_in_lpm", "q_out_lpm", "q_branch_lpm")
-        )
+        return (
+            isinstance(flow, dict)
+            and any(k in flow for k in ("q_in_lpm", "q_out_lpm", "q_branch_lpm"))
+        ) or any(k in raw_data for k in ("q_in_lpm", "q_out_lpm", "q_branch_lpm"))
 
     @staticmethod
     def validate(raw_data: dict) -> tuple[bool, str]:
@@ -46,11 +47,29 @@ class TelemetryValidator:
         if "ts" not in raw_data:
             return False, "Missing required top-level key: 'ts'"
 
-        if not TelemetryValidator._has_flow_fields(raw_data):
+        is_flat = any(k in raw_data for k in ("q_in_lpm", "q_out_lpm"))
+        if is_flat:
+            missing = [
+                key for key in ("q_in_lpm", "q_out_lpm", "current_ma", "voltage_v")
+                if key not in raw_data
+            ]
+            if missing:
+                return False, f"Missing required telemetry field(s): {', '.join(missing)}"
+        elif not TelemetryValidator._has_flow_fields(raw_data):
             return False, (
                 "No recognizable flow fields — expected a nested 'flow' object "
                 "with q_in_lpm/q_out_lpm per docs/MQTT_SPEC.md"
             )
+
+        else:
+            flow = raw_data.get("flow") or {}
+            power = raw_data.get("power") or {}
+            missing = [key for key in ("q_in_lpm", "q_out_lpm") if key not in flow]
+            missing += [key for key in ("current_ma",) if key not in power]
+            if "bus_v" not in power and "voltage" not in power:
+                missing.append("bus_v")
+            if missing:
+                return False, f"Missing nested telemetry field(s): {', '.join(missing)}"
 
         try:
             dto = TelemetryDTO.from_dict(raw_data)

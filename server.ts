@@ -1,15 +1,76 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 
-const FASTAPI_BASE_URL = process.env.FASTAPI_BASE_URL || "http://localhost:8000";
+const FASTAPI_BASE_URL = process.env.FASTAPI_BASE_URL || "http://localhost:8001";
+const FASTAPI_API_KEY = process.env.API_KEY || "local-dev-key-change-me";
+const DASHBOARD_AUDIENCE = process.env.DASHBOARD_AUDIENCE === "judge" ? "judge" : "operator";
+const IS_JUDGE_VIEW = DASHBOARD_AUDIENCE === "judge";
+const WORKSPACE_ROOT = path.resolve(process.cwd());
+const SENSITIVE_FILENAMES = new Set([".env", "secrets.h"]);
+
+function resolveInsideWorkspace(relativePath: string) {
+  const resolved = path.resolve(WORKSPACE_ROOT, relativePath);
+  const relative = path.relative(WORKSPACE_ROOT, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  if (SENSITIVE_FILENAMES.has(path.basename(resolved)) || path.basename(resolved).startsWith(".env")) return null;
+  return resolved;
+}
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+  const HOST = process.env.HOST || "0.0.0.0";
 
-  app.use(express.json());
+  app.disable("x-powered-by");
+  app.use(express.json({ limit: "32kb" }));
+  app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Frame-Options", "DENY");
+    if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
+
+    if (IS_JUDGE_VIEW) {
+      res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+      if (process.env.NODE_ENV === "production") {
+        res.setHeader(
+          "Content-Security-Policy",
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+        );
+      }
+      if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        res.status(403).json({
+          status: "error",
+          code: "PUBLIC_DEMO_READ_ONLY",
+          message: "The judge-facing dashboard is read-only. Use the local operator dashboard for changes.",
+        });
+        return;
+      }
+      if (req.path.startsWith("/api/files") || req.path.startsWith("/api/docs")) {
+        res.status(404).json({
+          status: "error",
+          code: "PUBLIC_DEMO_ROUTE_HIDDEN",
+          message: "This route is not available in the judge view.",
+        });
+        return;
+      }
+    }
+    next();
+  });
+
+  app.get("/api/runtime-capabilities", (_req, res) => {
+    res.json({
+      audience: DASHBOARD_AUDIENCE,
+      read_only: IS_JUDGE_VIEW,
+      mutations_allowed: !IS_JUDGE_VIEW,
+    });
+  });
+
+  app.get("/robots.txt", (_req, res) => {
+    res.type("text/plain").send("User-agent: *\nDisallow: /\n");
+  });
 
   // Thin proxy to the Python FastAPI service (backend/api_server.py), which
   // owns real detection state for whichever operating mode is active (Mock Data
@@ -19,7 +80,11 @@ async function startServer() {
     try {
       const query = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
       const url = `${FASTAPI_BASE_URL}${fastApiPath}${query}`;
-      const init: RequestInit = { method: req.method, headers: { "Content-Type": "application/json" } };
+      const init: RequestInit = {
+        method: req.method,
+        headers: { "Content-Type": "application/json", "X-API-Key": FASTAPI_API_KEY },
+        signal: AbortSignal.timeout(4000),
+      };
       if (req.method !== "GET" && req.method !== "HEAD") {
         init.body = JSON.stringify(req.body ?? {});
       }
@@ -36,8 +101,12 @@ async function startServer() {
 
       const data = await upstream.json();
       res.status(upstream.status).json(data);
-    } catch (e) {
-      res.status(502).json({ status: "error", result: `Detection backend unreachable: ${String(e)}` });
+    } catch (_e) {
+      res.status(502).json({
+        status: "error",
+        code: "DETECTION_BACKEND_UNAVAILABLE",
+        message: "The detection service did not respond within four seconds.",
+      });
     }
   }
 
@@ -108,10 +177,10 @@ async function startServer() {
   });
 
   app.get("/api/docs/:filename", (req, res) => {
-    const filename = req.params.filename;
-    const filePath = path.join(process.cwd(), "docs", filename);
+    const filename = path.basename(req.params.filename);
+    const filePath = filename.endsWith(".md") ? resolveInsideWorkspace(path.join("docs", filename)) : null;
     try {
-      if (fs.existsSync(filePath)) {
+      if (filePath && fs.existsSync(filePath)) {
         const content = fs.readFileSync(filePath, "utf-8");
         res.json({ filename, content });
       } else {
@@ -123,10 +192,11 @@ async function startServer() {
   });
 
   app.post("/api/docs/:filename", (req, res) => {
-    const filename = req.params.filename;
+    const filename = path.basename(req.params.filename);
     const { content } = req.body;
-    const filePath = path.join(process.cwd(), "docs", filename);
+    const filePath = filename.endsWith(".md") ? resolveInsideWorkspace(path.join("docs", filename)) : null;
     try {
+      if (!filePath || typeof content !== "string") return res.status(400).json({ error: "Valid Markdown filename and content required" });
       fs.writeFileSync(filePath, content, "utf-8");
       res.json({ success: true, filename });
     } catch (e) {
@@ -141,6 +211,7 @@ async function startServer() {
       const items: any[] = [];
       for (const entry of entries) {
         if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue;
+        if (SENSITIVE_FILENAMES.has(entry.name) || entry.name.startsWith(".env")) continue;
         const relPath = path.join(baseRelative, entry.name);
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
@@ -172,9 +243,9 @@ async function startServer() {
   app.get("/api/files/content", (req, res) => {
     const relativePath = req.query.path as string;
     if (!relativePath) return res.status(400).json({ error: "Path required" });
-    const fullPath = path.join(process.cwd(), relativePath);
+    const fullPath = resolveInsideWorkspace(relativePath);
     try {
-      if (fs.existsSync(fullPath)) {
+      if (fullPath && fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
         const content = fs.readFileSync(fullPath, "utf-8");
         res.json({ path: relativePath, content });
       } else {
@@ -200,8 +271,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Water Leak Detection Platform] Server running at http://0.0.0.0:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`[Water Leak Detection Platform] ${DASHBOARD_AUDIENCE} server running at http://${HOST}:${PORT}`);
   });
 }
 

@@ -7,7 +7,7 @@ TWO OPERATING MODES — identical after ingestion (docs/OPERATING_MODES.md)
 
   Mock Data Mode                    Live Sensor Mode
   MockTelemetrySource               ESP32 Rig Sensors
-  (declarative scenarios)           (Flow1/2/3, INA219, Pressure, Solenoid)
+  (declarative scenarios)           (Flow1/2/3, INA219, acoustic, temperature)
         │                                   │ [MQTT: rig/telemetry]
         │                            Mosquitto Broker
         │                                   │
@@ -18,14 +18,15 @@ TWO OPERATING MODES — identical after ingestion (docs/OPERATING_MODES.md)
                     ↓
  Python / Express Backend
   ├── Telemetry Collector & Validator
-  ├── MongoDB Database Layer (mongodb://localhost:27017/water_leak_detection)
+  ├── MongoDB Layer (jal_netra_live / jal_netra_mock)
   ├── Multi-Algorithm Detectors:
   │    ├── Mass Balance
   │    ├── Current Signature
   │    ├── Minimum Night Flow (MNF)
-  │    └── CUSUM
+  │    ├── CUSUM
+  │    └── Acoustic signature
   ├── Multi-Sensor Fusion Engine
-  ├── Replay Engine
+  ├── Offline Benchmark Scorer
   ├── Branch Localization Engine
   └── CP-SAT Work Order Scheduler
         ↓

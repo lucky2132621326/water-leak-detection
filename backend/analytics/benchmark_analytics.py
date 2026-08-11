@@ -115,7 +115,8 @@ class BenchmarkAnalytics:
                     pump_on=(doc.get("actuators") or {}).get("pump1", True))
                 fused = fusion.fuse(results)
 
-                in_leak = matching_window(doc["ts"], windows) is not None
+                window = matching_window(doc["ts"], windows)
+                in_leak = window is not None
                 by_method = {d["method"]: d for d in results}
                 by_method["fusion"] = {"is_alarm": fused["is_alarm"]}
 
@@ -124,8 +125,7 @@ class BenchmarkAnalytics:
                     if alarm and in_leak:
                         s["tp"] += 1
                         if onset_seen[name] is None:
-                            gt = next(g for g in truth if g["start_ts"] <= doc["ts"] <= (g.get("stop_ts") or doc["ts"] + 1))
-                            onset_seen[name] = doc["ts"] - gt["start_ts"]
+                            onset_seen[name] = doc["ts"] - window["open_ts"]
                     elif alarm and not in_leak:
                         s["fp"] += 1
                     elif not alarm and in_leak:

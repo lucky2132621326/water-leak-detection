@@ -11,14 +11,12 @@ from abc import ABC, abstractmethod
 class TelemetrySource(ABC):
     """Base for anything that feeds the detection pipeline.
 
-    Implementations must emit the FLAT payload shape the ESP32 publishes:
+    Implementations emit the nested payload documented in MQTT_SPEC.md:
 
-        {"ts", "device_id", "q_in_lpm", "q_out_lpm", "q_branch_lpm",
-         "current_ma", "voltage_v", "solenoid_state",
-         "pulses_in", "pulses_out", "pulses_branch"}
+        {"ts", "device", "flow", "power", "vibration", "temp",
+         "actuators", "health"}
 
-    Emitting anything else would route mock data around the validator and the
-    DTO, which is exactly the class of drift this abstraction exists to stop.
+    Both sources still pass raw payloads through the same validator and DTO.
     """
 
     #: Stamped onto every stored record and alert so operational KPIs can

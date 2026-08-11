@@ -13,6 +13,7 @@ import paho.mqtt.client as mqtt
 from backend.config.config_loader import config_loader
 from backend.ingestion.telemetry_source import TelemetrySource
 from backend.utils.logger import logger
+from backend.repositories.file_logger import log_frame
 
 
 class MqttTelemetrySource(TelemetrySource):
@@ -22,6 +23,9 @@ class MqttTelemetrySource(TelemetrySource):
         self.host = host or config_loader.get("mqtt.host", "localhost")
         self.port = int(port or config_loader.get("mqtt.port", 1883))
         self.topic = topic or config_loader.get("mqtt.topic", "rig/telemetry")
+        self.status_topic = config_loader.get("mqtt.status_topic", "rig/status")
+        self.username = config_loader.get("mqtt.username", "")
+        self.password = config_loader.get("mqtt.password", "")
         self.client = None
         self._ingestor = None
         self._running = False
@@ -37,6 +41,8 @@ class MqttTelemetrySource(TelemetrySource):
                 return
             self._ingestor = ingestor
             self.client = mqtt.Client(userdata=self)
+            if self.username:
+                self.client.username_pw_set(self.username, self.password)
             self.client.on_connect = _on_connect
             self.client.on_message = _on_message
             self.client.on_disconnect = _on_disconnect
@@ -91,6 +97,7 @@ def _on_connect(client, userdata: MqttTelemetrySource, flags, rc):
     if rc == 0:
         logger.info(f"[LiveSource] connected, subscribing to {userdata.topic}")
         client.subscribe(userdata.topic)
+        client.subscribe(userdata.status_topic)
     else:
         logger.error(f"[LiveSource] connection failed, rc={rc}")
 
@@ -106,5 +113,10 @@ def _on_message(client, userdata: MqttTelemetrySource, msg):
     except Exception as e:
         logger.warning(f"[LiveSource] bad JSON on {msg.topic}: {e}")
         return
+    if msg.topic == userdata.status_topic:
+        userdata._ingestor.update_device_status(raw) if userdata._ingestor is not None else None
+        return
     if userdata._ingestor is not None:
-        userdata._ingestor.ingest(raw)
+        response = userdata._ingestor.ingest(raw)
+        if response is not None:
+            log_frame(raw, response)

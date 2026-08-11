@@ -1,120 +1,119 @@
-# PROJECT CONTEXT
+# Project Context
 
-> **AI AGENT INSTRUCTIONS**
-> 1. Read `PROJECT_CONTEXT.md` before coding.
-> 2. Do not create duplicate modules.
-> 3. Reuse existing files whenever possible.
-> 4. Update `PROJECT_CONTEXT.md` after changes.
-> 5. Update `CHANGELOG.md` after changes.
-> 6. Do not modify MQTT schema without updating `MQTT_SPEC.md`.
-> 7. Do not modify database schema without updating `DATABASE_SCHEMA.md`.
-> 8. Keep architecture simple.
-> 9. Complete current phase before starting next phase.
-> 10. Do not introduce new frameworks without justification.
+## Agent rules
 
----
+1. Reuse existing modules; do not create parallel implementations.
+2. Update `CHANGELOG.md` when behavior changes.
+3. Update `MQTT_SPEC.md` and `DATABASE_SCHEMA.md` with their contracts.
+4. Do not present mock, estimated, or decorative data as physical evidence.
+5. Detection output is indicative and requires field verification.
+6. Never expose MQTT, MongoDB, FastAPI, credentials, or mutation controls through
+   the public judge tunnel.
 
-## Hardware Status
+## Product scope
 
-| Component | Status | Interface / Pin | Notes |
-|---|---|---|---|
-| **ESP32 DevKit V1** | ONLINE | WiFi / MQTT | Fixed IP 192.168.1.104 |
-| **YF-S201 Flow Sensor #1 ($Q_{\text{in}}$)** | WORKING | GPIO 18 | Inlet main pulse meter |
-| **YF-S201 Flow Sensor #2 ($Q_{\text{out}}$)** | WORKING | GPIO 19 | Outlet return pulse meter |
-| **YF-S201 Flow Sensor #3 ($Q_{\text{branch}}$)** | WORKING | GPIO 21 | Branch A side pulse meter |
-| **INA219 Power/Current Sensor** | WORKING | I2C (SDA 21 / SCL 22) | Motor current load monitoring |
-| **12V DC Pump #1** | WORKING | Relay GPIO 26 | Primary circulation pump |
-| **12V DC Pump #2** | WORKING | Relay GPIO 27 | Auxiliary pump / variable load |
-| **Servo Motor Isolation Valve** | WORKING | PWM GPIO 13 | Branch A active isolation (0° / 45° / 90°) |
+Jal Netra is a single-team hardware diagnostic dashboard for one physical water
+rig. It is not a public multi-tenant SaaS: there are no end-user accounts,
+payments, public content pages, or remote valve-control workflows.
 
-**Last Verified Hardware Test**: 2026-08-03 10:00:00 UTC
+The system detects abnormal flow balance, pump-current changes, cumulative
+drift, minimum-night-flow deviations, and optional pipe-acoustic changes. It
+localizes likely zones, explains evidence and confidence, produces incident and
+work-order summaries, and keeps detector results separate from physical ground
+truth.
 
----
+## Current verified state
 
-## Project Overview
-- **Name**: Water Leak Detection System (Hardware-In-The-Loop Bench & Analytics Workbench)
-- **Scope**: 2-week student project for 5 team members.
-- **Goal**: High-reliability physical rig and digital twin for real-time water pipeline leak detection, multi-algorithm sensor fusion, branch isolation, and automated crew work order scheduling.
-- **Current Phase**: Rebuilding the real pipeline ahead of the Aug 8 hackathon-ready checkpoint — an audit on 2026-08-05 found most of "Phase 1-3 Completed" below was dashboard-mock/scaffolding, not wired end-to-end. See `docs/CHANGELOG.md` [2026-08-05] for what was actually fixed.
-- **Current Status**: Real MongoDB persistence, MNF detection, and a shared live/replay `DetectionPipeline` now exist and are wired through `backend/api_server.py` -> `server.ts` (proxy) -> dashboard. Firmware was rewritten with real WiFi/MQTT/sensor code but is untested against physical hardware in this environment. Still needed before demo: run against a real Mosquitto broker + MongoDB instance + the physical rig; flash and bench-test firmware; verify the Azure OpenAI summary path end-to-end (falls back to a template if unset).
-- **Last Updated**: 2026-08-05
+- Python suite: 153 tests plus 74 subtests passing.
+- TypeScript check and production build passing.
+- ESP32 firmware compiles successfully with PlatformIO / arduinoFFT 2.x.
+- Judge boundary test confirms all public mutations return 403 while the local
+  operator proxy remains authenticated and writable.
+- Software paths are validated; physical sensors and thresholds still require
+  bench calibration and a complete hardware rehearsal.
 
----
+## Hardware contract
 
-## Team Roles & Members
-- **Member A**: Firmware & Sensor Rig Lead (ESP32, Flow Sensors, INA219, Relays)
-- **Member B**: Backend & MQTT Architect (Python Collector, MongoDB Repository, Telemetry Parser)
-- **Member C**: Detection Algorithms Lead (Mass Balance, Current Signature, MNF, CUSUM, Fusion)
-- **Member D**: Replay Engine & Analytics (Historical Replay, ROC/F1 Evaluation Metrics)
-- **Member E**: Dashboard & Optimization Lead (Streamlit / React Workbench, Branch Localization, CP-SAT Scheduler)
+| Component | Interface |
+|---|---|
+| ESP32 DevKit V1 | Wi-Fi + MQTT |
+| Flow 1 / inlet | GPIO 34, rising-edge interrupt |
+| Flow 2 / outlet | GPIO 35, rising-edge interrupt |
+| Flow 3 / Branch B | GPIO 32, rising-edge interrupt |
+| INA219 | I²C SDA 21 / SCL 22, address 0x40 |
+| MPU6050 | I²C SDA 21 / SCL 22, address 0x68 |
+| Optional piezo | GPIO 33, ADC1 |
+| DS18B20 | GPIO 4, 1-Wire with 4.7 kΩ pull-up |
+| Supply pump relay | GPIO 25, active-low |
+| Demand pump relay | GPIO 26, active-low |
+| Branch A pinch servo | GPIO 27, separate servo supply |
 
----
+The current rig has no pressure transducer and no leak solenoid. Dashboard
+pressure is an explicitly labelled estimate and is not independent detection
+evidence. Physical leaks are opened manually; operator-recorded time windows are
+the live ground truth.
 
-## System Architecture Summary
+## Architecture
+
 ```text
-ESP32 (Telemetry Rig)
-  ↓ [MQTT / Telemetry Topics]
-Mosquitto Broker
-  ↓
-Python Backend / Express Server
-  ├── Telemetry Collector & Validator
-  ├── MongoDB Storage Engine (data/water_leak_detection)
-  ├── Detectors (Mass Balance, Current, MNF, CUSUM, Fusion)
-  ├── Localization & Isolation
-  ├── Replay Engine
-  └── CP-SAT Work Order Scheduler
-  ↓
-MongoDB Database (mongodb://localhost:27017/water_leak_detection)
-  ↓
-Interactive Dashboard Workbench
+ESP32 ── MQTT rig/telemetry + rig/status ──► MqttTelemetrySource
+Mock scenario generator ───────────────────► MockTelemetrySource
+                                             │
+                                             ▼
+                                  one TelemetryIngestor
+                                             │
+                  validate → DTO → detectors → plausibility → fusion
+                              → localization → alerts/impact/reports
+                                             │
+                       jal_netra_live OR jal_netra_mock (MongoDB)
+                                             │
+                                      FastAPI :8001
+                                             │ server-side API key
+                                      Node operator :3000
+                                      Node judge :3001 (read-only)
+                                             │
+                                  Cloudflare Quick Tunnel
+                                  exposes only judge :3001
 ```
 
----
+Exactly two operating modes exist: `mock` and `live`. They differ only at the
+telemetry source; all validation and detection after ingestion is shared.
+Offline benchmark scoring reuses the production pipeline but is not an
+operating mode.
 
-## Completed Features
-- [x] **MQTT Spec & Collector**: JSON Telemetry schema (`rig/telemetry`), input/output flow ($Q_{in}$, $Q_{out}$, $Q_{branch}$), pump power consumption ($I_{mA}$, $V$).
-- [x] **MongoDB Collections & Repository**: Collections `telemetry`, `leak_events`, `detections`, `experiment_runs`, `work_orders`.
-- [x] **Core Mass Balance Detector**: $3\sigma$ thresholding on differential flow residual ($Q_{in} - Q_{out} - Q_{branch}$).
-- [x] **Current Signature Analysis**: Motor load current spike/drop detection on valve actuation.
-- [x] **Minimum Night Flow (MNF) Detector**: Low-baseline leak residual tracking during quiet operational windows.
-- [x] **CUSUM Detector**: Cumulative sum drift tracker for subtle micro-leaks.
-- [x] **Multi-Sensor Confidence Fusion**: Weighted Bayesian / confidence score combining all 4 detection channels.
-- [x] **Replay Engine**: Replay historical benchmark datasets (`RUN_001` - `RUN_012`) with speed adjustments and ROC/F1 evaluation calculation.
-- [x] **Branch Localization**: Branch topology isolation determining leak proximity and branch node (Branch A / Branch B / Main).
-- [x] **CP-SAT Work Order Scheduler**: Constraint-based crew dispatch matching leak severity with crew skills and travel times.
-- [x] **WNTR / EPANET Simulation**: Hydraulic model runner & benchmark comparisons.
+## Core modules
 
----
+- `backend/ingestion/`: shared ingestor plus mock/live source adapters.
+- `backend/detectors/`: mass balance, current signature, MNF, CUSUM, acoustic,
+  and the cross-channel plausibility guard.
+- `backend/fusion/`, `backend/localization/`, `backend/alerts/`:
+  explainable decision and incident lifecycle.
+- `backend/benchmark/`, `backend/analytics/`, `backend/reports/`: computed
+  performance evidence from stored runs and logged leak windows.
+- `backend/scheduler/cp_sat_scheduler.py`: OR-Tools crew scheduling with an
+  explicitly labelled fallback.
+- `backend/notifications/whatsapp.py`: optional Twilio WhatsApp notification;
+  failures never break detection.
+- `firmware/src/`: nested MQTT telemetry, retained status/Last Will, authenticated
+  broker connection, local pump watchdog, and sensor acquisition.
+- `server.ts`: server-side API-key proxy and operator/judge policy boundary.
 
-## Pending Features / Next Tasks
-- [ ] Calibrate Flow Sensor 2 K-factor pulse drift under high pressure (>3 bar).
-- [ ] Add live hardware serial pass-through connector for direct USB-ESP32 debugging.
-- [ ] Execute Run 13-20 high-rate pulse noise stress test.
+## Storage and contracts
 
----
+MongoDB uses physically separate `jal_netra_live` and `jal_netra_mock`
+databases, selected centrally by `backend/repositories/db.py`. See
+`DATABASE_SCHEMA.md`.
 
-## Database Schema Overview
-- `telemetry`: `_id`, `ts`, `seq`, `q_in_lpm`, `q_out_lpm`, `q_branch_lpm`, `current_ma`, `voltage_v`, `pressure_bar`, `raw_pulses_in`, `raw_pulses_out`
-- `leak_events`: `_id`, `start_ts`, `stop_ts`, `location_node`, `severity_lpm`, `is_ground_truth`, `notes`
-- `detections`: `_id`, `ts`, `method`, `confidence`, `residual`, `is_alarm`, `leak_event_id`
-- `experiment_runs`: `_id`, `operator`, `date`, `leak_size_lpm`, `pump_mode`, `notes`
-- `work_orders`: `_id`, `leak_event_id`, `crew_name`, `priority`, `scheduled_start`, `status`, `estimated_hrs`
+MQTT topics are `rig/telemetry`, `rig/status`, and `rig/cmd`. The broker is bound
+only to loopback and/or the dedicated rig interface, with separate device and
+backend accounts. See `MQTT_SPEC.md`.
 
----
+## Remaining hardware work
 
-## MQTT Topics Specification
-- `rig/telemetry` -> Published by ESP32 every 1000ms.
-- `rig/cmd` -> Commands sent to ESP32 (e.g. valve open/close, pump PWM speed).
-- `rig/status` -> System health, WiFi RSSI, sensor status flags.
-
----
-
-## Known Bugs & Fixes
-- **Flow Sensor Pulse Drift**: Resolved by adding hardware debouncing capacitor (100nF) and 10ms software dead-time in ISR.
-- **Servo Re-boot**: Addressed by isolating servo power line to dedicated 5V 2A regulator with common ground.
-
----
-
-## Recent Decisions
-- **Decision #001**: MongoDB selected over SQLite/Relational for schema flexibility, document-oriented time-series indexing, and scalable JSON telemetry storage.
-- **Decision #002**: Flat backend structure (`collector`, `detectors`, `replay`, `scheduler`) chosen for 30-second error isolation.
+1. Wire and validate each sensor using the serial-test firmware.
+2. Calibrate every flow-meter K factor and the clean residual bias/sigma.
+3. Establish clean acoustic and pump-current baselines on the assembled rig.
+4. Provision Mosquitto ACLs and copy local credentials into git-ignored `.env`
+   and `firmware/src/secrets.h`.
+5. Rehearse mock fallback, live transition, manual leak ground truth, detection,
+   localization, alert/report generation, ESP32 disconnect, and recovery.

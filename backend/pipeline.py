@@ -7,7 +7,7 @@ shaping. Switching modes changes where data comes from, never how it is judged.
 from backend.detectors.detection_state_machine import DetectionStateMachine
 from backend.detectors.detector_manager import DetectorManager
 from backend.detectors.plausibility import PlausibilityGuard
-from backend.detectors.residual import compute_residual
+from backend.detectors.residual import compute_residual, describe_topology
 from backend.fusion.confidence_engine import ConfidenceEngine
 from backend.fusion.fusion_engine import FusionEngine
 from backend.localization.localization_service import LocalizationService
@@ -24,8 +24,10 @@ class DetectionPipeline:
 
     def process_sample(self, ts, q_in, q_out, q_branch, current_ma, bus_v=12.0,
                        pump_on=True, servo_state_deg=0, vibration=None,
-                       water_c=None):
-        residual = compute_residual(q_in, q_out, q_branch)
+                       water_c=None, voltage_v=None):
+        if voltage_v is not None:
+            bus_v = voltage_v
+        residual = compute_residual(q_in, q_out, q_branch, apply_bias=True)
 
         detector_results = self.detector_manager.process_sample(
             ts, q_in, q_out, q_branch, current_ma, bus_v,
@@ -60,8 +62,10 @@ class DetectionPipeline:
             localization = self.localization_service.localize_leak(residual, q_branch, servo_state_deg)
         else:
             self.alarm_onset_ts = None
+            self.localization_service.observe_baseline(q_branch)
             localization = {"zone": "NONE", "confidence": "NONE"}
 
+        topology = describe_topology()
         return {
             "ts": ts,
             "residual": round(residual, 3),
@@ -73,4 +77,10 @@ class DetectionPipeline:
             "alarm_onset_ts": self.alarm_onset_ts,
             "plausibility": plausibility,
             "water_c": water_c,
+            "hydraulics": {
+                "topology": "metered_outflow" if topology["subtract_branch"] else "recombined_branch",
+                "zero_leak_bias_lpm": topology["bias_lpm"],
+                "branch_in_mass_balance": topology["subtract_branch"],
+                "formula": topology["formula"],
+            },
         }

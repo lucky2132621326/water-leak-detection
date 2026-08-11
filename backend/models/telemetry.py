@@ -1,9 +1,9 @@
 """Telemetry Data Transfer Objects — the contract between firmware, backend and UI.
 
 The wire format is defined in docs/MQTT_SPEC.md (spec Part G) and is **nested**.
-The previous flat format is gone: the ESP32 is being reflashed for this rig, so
-nothing emits it, and keeping a parser for a format nothing produces is dead code
-that will mislead whoever reads it next.
+New firmware emits the nested format. The parser also accepts the former flat
+field names as a temporary stored-data compatibility path; detection receives
+the same DTO either way.
 
 Two fields are deliberately absent:
 
@@ -49,6 +49,11 @@ class PowerData:
     bus_v: float = 12.0
     current_ma: float = 0.0
     power_mw: float = 0.0
+
+    @property
+    def voltage(self) -> float:
+        """Backward-compatible name used by stored replay/report code."""
+        return self.bus_v
 
 
 @dataclass
@@ -127,10 +132,14 @@ class TelemetryDTO:
     actuators: ActuatorData = field(default_factory=ActuatorData)
     health: HealthData = field(default_factory=HealthData)
 
+    @property
+    def device_id(self) -> str:
+        return self.device
+
     @classmethod
     def from_dict(cls, data: dict) -> 'TelemetryDTO':
-        flow_d = data.get("flow") or {}
-        power_d = data.get("power") or {}
+        flow_d = data.get("flow") if isinstance(data.get("flow"), dict) else {}
+        power_d = data.get("power") if isinstance(data.get("power"), dict) else {}
         vib_d = data.get("vibration") or {}
         temp_d = data.get("temp") or {}
         act_d = data.get("actuators") or {}
@@ -139,19 +148,19 @@ class TelemetryDTO:
         return cls(
             ts=float(data.get("ts", 0.0)),
             seq=int(data.get("seq", 0)),
-            device=str(data.get("device", "esp32-rig-01")),
+            device=str(data.get("device", data.get("device_id", "esp32-rig-01"))),
             mode=str(data.get("mode", MODE_LIVE)),
             flow=FlowData(
-                q_in_lpm=float(flow_d.get("q_in_lpm", 0.0)),
-                q_out_lpm=float(flow_d.get("q_out_lpm", 0.0)),
-                q_branch_lpm=float(flow_d.get("q_branch_lpm", 0.0)),
-                pulses_in=int(flow_d.get("pulses_in", 0)),
-                pulses_out=int(flow_d.get("pulses_out", 0)),
-                pulses_branch=int(flow_d.get("pulses_branch", 0)),
+                q_in_lpm=float(flow_d.get("q_in_lpm", data.get("q_in_lpm", 0.0))),
+                q_out_lpm=float(flow_d.get("q_out_lpm", data.get("q_out_lpm", 0.0))),
+                q_branch_lpm=float(flow_d.get("q_branch_lpm", data.get("q_branch_lpm", 0.0))),
+                pulses_in=int(flow_d.get("pulses_in", data.get("raw_pulses_in", 0))),
+                pulses_out=int(flow_d.get("pulses_out", data.get("raw_pulses_out", 0))),
+                pulses_branch=int(flow_d.get("pulses_branch", data.get("raw_pulses_branch", 0))),
             ),
             power=PowerData(
-                bus_v=float(power_d.get("bus_v", 12.0)),
-                current_ma=float(power_d.get("current_ma", 0.0)),
+                bus_v=float(power_d.get("bus_v", power_d.get("voltage", data.get("voltage_v", 12.0)))),
+                current_ma=float(power_d.get("current_ma", data.get("current_ma", 0.0))),
                 power_mw=float(power_d.get("power_mw", 0.0)),
             ),
             vibration=VibrationData(
@@ -173,14 +182,14 @@ class TelemetryDTO:
             ),
             temp=TempData(water_c=_optional_float(temp_d.get("water_c"))),
             actuators=ActuatorData(
-                pump1=bool(act_d.get("pump1", False)),
+                pump1=bool(act_d.get("pump1", data.get("pump_on", False))),
                 pump2=bool(act_d.get("pump2", False)),
-                servo_deg=int(act_d.get("servo_deg", 0) or 0),
+                servo_deg=int(act_d.get("servo_deg", data.get("servo_deg", 0)) or 0),
             ),
             health=HealthData(
-                uptime_s=int(health_d.get("uptime_s", 0)),
-                wifi_rssi=int(health_d.get("wifi_rssi", -60)),
-                free_heap=int(health_d.get("free_heap", 180000)),
+                uptime_s=int(health_d.get("uptime_s", data.get("uptime_sec", 0))),
+                wifi_rssi=int(health_d.get("wifi_rssi", data.get("wifi_rssi", -60))),
+                free_heap=int(health_d.get("free_heap", data.get("heap_free", 180000))),
             ),
         )
 

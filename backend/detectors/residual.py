@@ -38,7 +38,7 @@ def flow_bias_lpm() -> float:
 
 
 def compute_residual(q_in: float, q_out: float, q_branch: float = 0.0,
-                     apply_bias: bool = True) -> float:
+                     apply_bias: bool = False) -> float:
     """Unaccounted flow, in L/min. Positive means water is going missing."""
     residual = q_in - q_out
     if subtract_branch():

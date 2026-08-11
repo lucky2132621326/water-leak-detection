@@ -257,34 +257,21 @@ npm run start
 
 ## ⚙️ Configuration Setup
 
-System parameters and thresholds are dynamically configured in `backend/config/settings.yaml`:
+Infrastructure settings live in `backend/config/settings.yaml`; detector tuning
+lives in `backend/config/thresholds.yaml`, and database names come from `.env`:
 
 ```yaml
 mqtt:
   host: "localhost"
   port: 1883
   topic: "rig/telemetry"
+  status_topic: "rig/status"
   cmd_topic: "rig/cmd"
-
-database:
-  uri: "mongodb://localhost:27017"
-  name: "water_leak_detection"
-
-detector:
-  sigma_multiplier: 3.0
-  persistence_seconds: 10
-  bias_lpm: 0.10
-  current_drop_threshold_ma: 20.0
-  cusum_slack_k: 0.15
-  cusum_decision_h: 3.0
 ```
 
-> **Careful with `database.uri`:** `backend/repositories/db.py` reads the
-> `MONGO_URI` **environment variable** (falling back to
-> `mongodb://localhost:27017`) and does *not* consult this YAML block. Editing
-> `database.uri` here has no effect on where the backend actually connects. The
-> default already matches what `docker compose up -d` publishes, so for normal
-> development neither needs touching.
+`backend/repositories/db.py` reads `MONGO_URI`, `MONGO_DB_LIVE`, and
+`MONGO_DB_MOCK`; defaults are `mongodb://localhost:27017`, `jal_netra_live`, and
+`jal_netra_mock`.
 
 ---
 
@@ -293,7 +280,7 @@ detector:
 1. Connect ESP32 DevKit V1 to (see `docs/HARDWARE_SETUP.md` / `firmware/docs/PINOUT.md` — source of truth, matches `firmware/src/config.h`):
    - **YF-S201 Flow Sensors**: GPIO 34 ($Q_{\text{in}}$), GPIO 35 ($Q_{\text{out}}$), GPIO 32 ($Q_{\text{branch}}$)
    - **INA219 Current Sensor**: I2C SDA (GPIO 21) / SCL (GPIO 22)
-   - **Relays (Pump / Leak Solenoid)**: GPIO 25 & GPIO 26
+   - **Relays (Supply / Demand Pumps)**: GPIO 25 & GPIO 26
    - **Servo Isolation Actuator**: PWM GPIO 27
    - No physical pressure sensor is installed; `pressure_bar` is estimated server-side from flow/pump state.
 2. Open `firmware/` in PlatformIO (`platformio.ini` targets `esp32dev`).

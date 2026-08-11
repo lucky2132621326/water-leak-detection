@@ -37,29 +37,32 @@ interface SidebarProps {
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
   unreadAlertsCount?: number;
+  readOnly?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   onSelectTab,
-  unreadAlertsCount = 3
+  unreadAlertsCount = 0,
+  readOnly = false,
 }) => {
-  const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
+  const allNavItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number; operatorOnly?: boolean }[] = [
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="w-5 h-5" /> },
     { id: "live-monitoring", label: "Live Monitoring", icon: <Radio className="w-5 h-5" /> },
-    { id: "experiment-control", label: "Experiment Control", icon: <FlaskConical className="w-5 h-5" /> },
+    { id: "experiment-control", label: "Experiment Control", icon: <FlaskConical className="w-5 h-5" />, operatorOnly: true },
     { id: "leak-detection", label: "Leak Detection", icon: <Droplets className="w-5 h-5" /> },
     { id: "localization", label: "Localization", icon: <MapPin className="w-5 h-5" /> },
-    { id: "impact-simulator", label: "Impact Simulator", icon: <Calculator className="w-5 h-5" /> },
-    { id: "scenarios", label: "Mock Scenarios", icon: <RotateCcw className="w-5 h-5" /> },
-    { id: "analytics", label: "Analytics", icon: <BarChart3 className="w-5 h-5" /> },
-    { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" /> },
-    { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" /> },
+    { id: "impact-simulator", label: "Impact Simulator", icon: <Calculator className="w-5 h-5" />, operatorOnly: true },
+    { id: "scenarios", label: "Mock Scenarios", icon: <RotateCcw className="w-5 h-5" />, operatorOnly: true },
+    { id: "analytics", label: "Analytics", icon: <BarChart3 className="w-5 h-5" />, operatorOnly: true },
+    { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" />, operatorOnly: true },
+    { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" />, operatorOnly: true },
     { id: "reports", label: "Reports", icon: <FileText className="w-5 h-5" /> },
     { id: "alerts", label: "Alert Center", icon: <Bell className="w-5 h-5" />, badge: unreadAlertsCount },
     { id: "leak-history", label: "Leak History", icon: <History className="w-5 h-5" /> },
-    { id: "settings", label: "Settings", icon: <Settings className="w-5 h-5" /> }
+    { id: "settings", label: "Settings", icon: <Settings className="w-5 h-5" />, operatorOnly: true }
   ];
+  const navItems = allNavItems.filter((item) => !readOnly || !item.operatorOnly);
 
   return (
     <aside className="w-64 bg-[#0B132B] text-slate-300 flex flex-col min-h-screen sticky top-0 z-30 border-r border-slate-800/80 shrink-0 select-none">

@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -43,7 +43,30 @@ from backend.services.experiment_service import get_experiment_service
 from backend.utils.logger import logger
 
 app = FastAPI(title="Water Leak Detection API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+_default_origins = "http://localhost:3000,http://127.0.0.1:3000"
+_allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", _default_origins).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
+)
+
+_API_KEY = os.getenv("API_KEY", "local-dev-key-change-me")
+if _API_KEY == "local-dev-key-change-me":
+    logger.warning(
+        "[Security] API_KEY not set — using the insecure development default. "
+        "Keep FastAPI on loopback and set API_KEY before sharing the dashboard."
+    )
+
+
+def require_api_key(x_api_key: Optional[str] = Header(None)):
+    if x_api_key != _API_KEY:
+        raise HTTPException(status_code=401, detail="Missing or invalid X-API-Key")
 
 
 # --- Operating modes ---------------------------------------------------------
@@ -175,7 +198,7 @@ def get_mode():
     }
 
 
-@app.post("/api/mode")
+@app.post("/api/mode", dependencies=[Depends(require_api_key)])
 def set_mode(req: ModeRequest):
     if req.mode not in (MODE_MOCK, MODE_LIVE):
         return {"success": False, "error": f"mode must be '{MODE_MOCK}' or '{MODE_LIVE}'"}
@@ -191,7 +214,7 @@ def get_scenarios():
     return {"scenarios": list_scenarios(), "active": (_mock_source.scenario.id if _mock_source else None)}
 
 
-@app.post("/api/scenarios/run")
+@app.post("/api/scenarios/run", dependencies=[Depends(require_api_key)])
 def run_scenario(body: dict):
     """Evaluate a scenario end-to-end immediately and score it against its own
     ground truth. Runs through the same ingestor the dashboard uses, on an
@@ -253,7 +276,7 @@ def list_benchmark_runs():
     return list(db.experiment_runs.find({}, {"_id": 0}))
 
 
-@app.post("/api/benchmark/evaluate")
+@app.post("/api/benchmark/evaluate", dependencies=[Depends(require_api_key)])
 def evaluate_benchmark(body: dict):
     run_id = body.get("run_id")
     if not run_id:
@@ -290,7 +313,7 @@ def _publish_command(payload: dict) -> tuple[bool, str]:
     return _live_source.publish_command({**payload, "ts": int(time.time())})
 
 
-@app.post("/api/leak/toggle")
+@app.post("/api/leak/toggle", dependencies=[Depends(require_api_key)])
 def leak_toggle(body: dict):
     """Bench controls — the SAME operator actions in both modes.
 
@@ -374,7 +397,7 @@ def mock_control_state():
             "leak_control": _mock_source.control.snapshot()}
 
 
-@app.post("/api/mock/control/release")
+@app.post("/api/mock/control/release", dependencies=[Depends(require_api_key)])
 def mock_control_release():
     """Return leak control to the scenario script."""
     if _mock_source is None:
@@ -389,7 +412,7 @@ def experiment_status():
     return get_experiment_service().status()
 
 
-@app.post("/api/experiments/start")
+@app.post("/api/experiments/start", dependencies=[Depends(require_api_key)])
 def experiment_start(body: dict):
     return get_experiment_service().start_run(
         run_id=body.get("run_id"),
@@ -401,12 +424,12 @@ def experiment_start(body: dict):
     )
 
 
-@app.post("/api/experiments/stop")
+@app.post("/api/experiments/stop", dependencies=[Depends(require_api_key)])
 def experiment_stop():
     return get_experiment_service().stop_run()
 
 
-@app.post("/api/experiments/ground-truth/start")
+@app.post("/api/experiments/ground-truth/start", dependencies=[Depends(require_api_key)])
 def ground_truth_start(body: dict = None):
     body = body or {}
     return get_experiment_service().start_ground_truth_leak(
@@ -416,7 +439,7 @@ def ground_truth_start(body: dict = None):
     )
 
 
-@app.post("/api/experiments/ground-truth/stop")
+@app.post("/api/experiments/ground-truth/stop", dependencies=[Depends(require_api_key)])
 def ground_truth_stop():
     return get_experiment_service().stop_ground_truth_leak()
 
@@ -426,7 +449,7 @@ def list_work_orders():
     return WorkOrderRepository().list_all()
 
 
-@app.post("/api/work-orders/dispatch")
+@app.post("/api/work-orders/dispatch", dependencies=[Depends(require_api_key)])
 def dispatch_work_order(body: dict):
     scheduler = CPSatWorkOrderScheduler()
 
@@ -497,7 +520,7 @@ def impact_current():
     }
 
 
-@app.post("/api/impact/simulate")
+@app.post("/api/impact/simulate", dependencies=[Depends(require_api_key)])
 def impact_simulate(body: dict):
     """The interactive 'what if we ignore it?' simulator. Every parameter is
     optional and falls back to the configured default."""
@@ -548,7 +571,7 @@ def alerts_summary():
     return {"counts": svc.counts(), "zones": svc.zones(), "timeline": svc.timeline()}
 
 
-@app.post("/api/alerts/{alert_id}/resolve")
+@app.post("/api/alerts/{alert_id}/resolve", dependencies=[Depends(require_api_key)])
 def resolve_alert(alert_id: str, body: dict = None):
     alert = _alerts().resolve(alert_id, note=(body or {}).get("note", ""))
     if not alert:
@@ -556,7 +579,7 @@ def resolve_alert(alert_id: str, body: dict = None):
     return {"success": True, "alert": alert, "savings": _alerts().savings()}
 
 
-@app.post("/api/alerts/{alert_id}/false-positive")
+@app.post("/api/alerts/{alert_id}/false-positive", dependencies=[Depends(require_api_key)])
 def false_positive_alert(alert_id: str, body: dict = None):
     alert = _alerts().mark_false_positive(alert_id, note=(body or {}).get("note", ""))
     if not alert:
@@ -564,7 +587,7 @@ def false_positive_alert(alert_id: str, body: dict = None):
     return {"success": True, "alert": alert, "savings": _alerts().savings()}
 
 
-@app.post("/api/alerts/{alert_id}/reopen")
+@app.post("/api/alerts/{alert_id}/reopen", dependencies=[Depends(require_api_key)])
 def reopen_alert(alert_id: str):
     alert = _alerts().reopen(alert_id)
     if not alert:
@@ -596,7 +619,7 @@ def get_calibration():
     return data
 
 
-@app.post("/api/calibration")
+@app.post("/api/calibration", dependencies=[Depends(require_api_key)])
 def save_calibration(body: dict):
     from backend.calibration.calibration_repository import CalibrationRepository
     allowed = {"flow1_k", "flow2_k", "flow3_k", "bias_lpm", "sigma_lpm",
@@ -636,8 +659,9 @@ def get_config():
         },
         "database": {
             "uri": os.getenv("MONGO_URI", "mongodb://localhost:27017"),
-            "name": os.getenv("MONGO_DB_NAME", "water_leak_detection"),
-            "source": "MONGO_URI environment variable (settings.yaml database.uri is not read)",
+            "live_name": os.getenv("MONGO_DB_LIVE", "jal_netra_live"),
+            "mock_name": os.getenv("MONGO_DB_MOCK", "jal_netra_mock"),
+            "source": "MONGO_URI and mode-specific database environment variables",
         },
         "detector": {
             "sigma_multiplier": thresholds_loader.get("mass_balance.sigma_threshold", 3.0),
@@ -656,7 +680,7 @@ def get_config():
     }
 
 
-@app.post("/api/self-test")
+@app.post("/api/self-test", dependencies=[Depends(require_api_key)])
 def run_self_test():
     """Runs the real backend self-test (backend/self_test/system_self_test.py)
     and returns its captured output."""
@@ -753,10 +777,15 @@ def system_status():
     # The rig is considered online only if live telemetry arrived recently.
     rig_online, rig_last_seen = False, None
     if _mode == MODE_LIVE and _ingestor.latest_telemetry:
-        rig_last_seen = _ingestor.latest_telemetry.get("ts")
+        # Use server receive time, not the device clock. A stale or drifting ESP
+        # timestamp must not make a connected rig look offline (or vice versa).
+        rig_last_seen = _ingestor.latest_received_at
         try:
             rig_online = (time.time() - float(rig_last_seen)) < 10
         except (TypeError, ValueError):
+            rig_online = False
+        device_state = str((_ingestor.latest_device_status or {}).get("status", "")).upper()
+        if device_state == "OFFLINE":
             rig_online = False
 
     return {

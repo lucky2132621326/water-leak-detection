@@ -126,6 +126,7 @@ interface DashboardViewProps {
   evaluation?: any;
   alerts?: LeakAlert[];
   scenarioName?: string | null;
+  readOnly?: boolean;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -140,7 +141,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   systemStatus,
   evaluation,
   alerts = [],
-  scenarioName
+  scenarioName,
+  readOnly = false,
 }) => {
   // No fabricated fallbacks. If the backend is unreachable these read zero and
   // the status row reports the fault — previously they fell back to invented
@@ -271,12 +273,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-slate-900 tracking-tight">Detection Session</h3>
-              <button
+              {!readOnly && <button
                 onClick={() => onNavigateTab("experiment-control")}
                 className="text-xs font-bold text-blue-600 hover:text-blue-700 transition"
               >
                 View All
-              </button>
+              </button>}
             </div>
 
             <div className="space-y-3">

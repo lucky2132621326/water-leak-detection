@@ -319,6 +319,12 @@ export interface ExperimentReport {
  *  after ingestion is one shared pipeline. */
 export type OperatingMode = "mock" | "live";
 
+export interface RuntimeCapabilities {
+  audience: "operator" | "judge";
+  read_only: boolean;
+  mutations_allowed: boolean;
+}
+
 export interface ScenarioSummary {
   id: string;
   name: string;

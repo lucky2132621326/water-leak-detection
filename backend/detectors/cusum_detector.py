@@ -8,16 +8,20 @@ same defect already found and fixed in MassBalanceDetector and MNFDetector.
 """
 
 class CUSUMDetector:
-    def __init__(self, slack_k=0.15, decision_h=3.0, cap_multiple=2.0):
+    def __init__(self, slack_k=0.15, decision_h=3.0, cap_multiple=2.0,
+                 reset_after_normal_samples=10):
         self.k = slack_k  # Reference value slack
         self.h = decision_h  # Decision boundary threshold
         #: Ceiling on the accumulator, as a multiple of h. This is what bounds
         #: recovery time; see the comment in `analyze`.
         self.cap = decision_h * cap_multiple
         self.s_pos = 0.0
+        self.reset_after_normal_samples = reset_after_normal_samples
+        self.consecutive_normal = 0
 
     def reset(self):
         self.s_pos = 0.0
+        self.consecutive_normal = 0
 
     def analyze(self, residual_lpm):
         # Accumulate positive residual deviation above slack k, then clamp.
@@ -37,6 +41,13 @@ class CUSUMDetector:
         # the same thing operationally, and confidence already saturates at 1.5h.
         self.s_pos = min(self.cap, max(0.0, self.s_pos + (residual_lpm - self.k)))
 
+        if residual_lpm <= self.k:
+            self.consecutive_normal += 1
+            if self.consecutive_normal >= self.reset_after_normal_samples:
+                self.s_pos = 0.0
+        else:
+            self.consecutive_normal = 0
+
         is_alarm = self.s_pos >= self.h
         confidence = min(1.0, max(0.0, self.s_pos / (self.h * 1.5))) if is_alarm else round(self.s_pos / self.h, 2)
 
@@ -44,6 +55,7 @@ class CUSUMDetector:
             "method": "cusum",
             "cusum_score": round(self.s_pos, 2),
             "threshold_h": self.h,
+            "recovery_samples": self.consecutive_normal,
             "is_alarm": is_alarm,
             "confidence": round(confidence, 2)
         }

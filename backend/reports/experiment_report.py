@@ -15,6 +15,7 @@ from backend.impact.impact_service import ImpactService
 from backend.reports.charts import line_chart
 from backend.repositories.db import get_db
 from backend.utils.logger import logger
+from backend.detectors.residual import compute_residual
 
 _DISCLAIMER = (
     "Detection results are indicative and require field verification. This report "
@@ -87,7 +88,7 @@ class ExperimentReportGenerator:
             out["q_in"].append(round(q_in, 3))
             out["q_out"].append(round(q_out, 3))
             out["q_branch"].append(round(q_branch, 3))
-            out["residual"].append(round(q_in - q_out - q_branch, 3))
+            out["residual"].append(round(compute_residual(q_in, q_out, q_branch), 3))
             out["current_ma"].append(round(power.get("current_ma", 0.0), 1))
             out["band_mid"].append((d.get("vibration") or {}).get("band_mid"))
         return out
@@ -95,12 +96,12 @@ class ExperimentReportGenerator:
     def _events(self, leak_events, run_start_ts):
         events = []
         for e in leak_events:
-            start = e.get("start_ts")
-            stop = e.get("stop_ts")
+            start = e.get("open_ts", e.get("start_ts"))
+            stop = e.get("close_ts", e.get("stop_ts"))
             duration = (stop - start) if (start is not None and stop is not None) else None
-            severity = float(e.get("severity_lpm") or 0.0)
+            severity = float(e.get("leak_lpm", e.get("severity_lpm")) or 0.0)
             events.append({
-                "location_node": e.get("location_node", "—"),
+                "location_node": e.get("location_node", e.get("tee_id", "—")),
                 "severity_lpm": round(severity, 3),
                 "start_ts": start,
                 "stop_ts": stop,
