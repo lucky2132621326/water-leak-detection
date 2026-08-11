@@ -11,7 +11,6 @@ import {
   ClipboardList,
   FileText,
   Bell,
-  Settings,
   Droplet,
   Calculator,
   History
@@ -59,8 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" />, operatorOnly: true },
     { id: "reports", label: "Reports", icon: <FileText className="w-5 h-5" /> },
     { id: "alerts", label: "Alert Center", icon: <Bell className="w-5 h-5" />, badge: unreadAlertsCount },
-    { id: "leak-history", label: "Leak History", icon: <History className="w-5 h-5" /> },
-    { id: "settings", label: "Settings", icon: <Settings className="w-5 h-5" />, operatorOnly: true }
+    { id: "leak-history", label: "Leak History", icon: <History className="w-5 h-5" /> }
   ];
   const navItems = allNavItems.filter((item) => !readOnly || !item.operatorOnly);
 

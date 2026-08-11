@@ -21,6 +21,7 @@ import type { SystemStatus } from "./components/SystemStatusRow";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
+  const [darkMode, setDarkMode] = useState(() => document.documentElement.classList.contains("dark"));
   const [health, setHealth] = useState<any>(null);
   const [latestTelemetry, setLatestTelemetry] = useState<any>(null);
   const [telemetryHistory, setTelemetryHistory] = useState<any[]>([]);
@@ -31,6 +32,11 @@ export default function App() {
   const [recentAlerts, setRecentAlerts] = useState<LeakAlert[]>([]);
   const [scenarioName, setScenarioName] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<RuntimeCapabilities | null>(null);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+    window.localStorage.setItem("water-leak-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
 
   // Fetch Health & Live Telemetry State
   const fetchState = () => {
@@ -184,6 +190,9 @@ export default function App() {
           systemOnline={health?.status === "ok"}
           unreadCount={activeAlertCount}
           onOpenAlerts={() => setActiveTab("alerts")}
+          onOpenSettings={() => setActiveTab("settings")}
+          darkMode={darkMode}
+          onToggleTheme={() => setDarkMode((enabled) => !enabled)}
           mode={mode}
           onToggleMode={handleToggleMode}
           readOnly={readOnly}

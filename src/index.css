@@ -1,1 +1,229 @@
 @import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+  background: #020617;
+}
+
+html.dark body {
+  background: #020617;
+}
+
+/*
+ * The dashboard predates theme tokens and uses Tailwind utility colors across
+ * many diagnostic views. These high-specificity mappings provide one coherent
+ * dark surface system without coupling theme state to backend data or cloning
+ * every component.
+ */
+html.dark [class~="bg-[#F8FAFC]"] {
+  background-color: #020617 !important;
+}
+
+html.dark [class~="bg-white"] {
+  background-color: #0f172a !important;
+}
+
+html.dark [class~="bg-slate-50"],
+html.dark [class~="bg-slate-50/70"],
+html.dark [class~="bg-slate-50/80"] {
+  background-color: #111c2f !important;
+}
+
+html.dark [class~="bg-slate-100"],
+html.dark [class~="bg-slate-200"],
+html.dark [class~="bg-slate-200/70"],
+html.dark [class~="bg-slate-200/80"] {
+  background-color: #1e293b !important;
+}
+
+html.dark [class~="bg-blue-50"],
+html.dark [class~="bg-blue-50/50"],
+html.dark [class~="bg-blue-50/60"],
+html.dark [class~="bg-blue-100"] {
+  background-color: rgb(30 64 175 / 0.2) !important;
+}
+
+html.dark [class~="bg-indigo-50"],
+html.dark [class~="bg-indigo-100"] {
+  background-color: rgb(67 56 202 / 0.2) !important;
+}
+
+html.dark [class~="bg-cyan-50"],
+html.dark [class~="bg-cyan-100"] {
+  background-color: rgb(8 145 178 / 0.18) !important;
+}
+
+html.dark [class~="bg-emerald-50"],
+html.dark [class~="bg-emerald-50/30"],
+html.dark [class~="bg-emerald-50/60"],
+html.dark [class~="bg-emerald-100"] {
+  background-color: rgb(5 150 105 / 0.18) !important;
+}
+
+html.dark [class~="bg-amber-50"],
+html.dark [class~="bg-amber-50/30"],
+html.dark [class~="bg-amber-100"] {
+  background-color: rgb(217 119 6 / 0.18) !important;
+}
+
+html.dark [class~="bg-rose-50"],
+html.dark [class~="bg-rose-50/30"],
+html.dark [class~="bg-rose-50/60"],
+html.dark [class~="bg-rose-100"] {
+  background-color: rgb(225 29 72 / 0.17) !important;
+}
+
+html.dark [class~="bg-purple-50"],
+html.dark [class~="bg-purple-50/30"] {
+  background-color: rgb(147 51 234 / 0.17) !important;
+}
+
+html.dark [class~="bg-orange-100"],
+html.dark [class~="bg-sky-100"] {
+  background-color: rgb(14 116 144 / 0.18) !important;
+}
+
+html.dark [class~="text-slate-900"] {
+  color: #f8fafc !important;
+}
+
+html.dark [class~="text-slate-800"] {
+  color: #e2e8f0 !important;
+}
+
+html.dark [class~="text-slate-700"] {
+  color: #cbd5e1 !important;
+}
+
+html.dark [class~="text-slate-600"],
+html.dark [class~="text-slate-500"] {
+  color: #94a3b8 !important;
+}
+
+html.dark [class~="text-blue-800"],
+html.dark [class~="text-blue-700"],
+html.dark [class~="text-blue-600"] {
+  color: #60a5fa !important;
+}
+
+html.dark [class~="text-indigo-700"],
+html.dark [class~="text-indigo-600"],
+html.dark [class~="text-indigo-500"] {
+  color: #a5b4fc !important;
+}
+
+html.dark [class~="text-cyan-900"],
+html.dark [class~="text-cyan-700"],
+html.dark [class~="text-cyan-600"] {
+  color: #67e8f9 !important;
+}
+
+html.dark [class~="text-emerald-800"],
+html.dark [class~="text-emerald-700"],
+html.dark [class~="text-emerald-600"] {
+  color: #6ee7b7 !important;
+}
+
+html.dark [class~="text-amber-900"],
+html.dark [class~="text-amber-800"],
+html.dark [class~="text-amber-700"],
+html.dark [class~="text-amber-600"] {
+  color: #fcd34d !important;
+}
+
+html.dark [class~="text-rose-700"],
+html.dark [class~="text-rose-600"],
+html.dark [class~="text-red-600"] {
+  color: #fda4af !important;
+}
+
+html.dark [class~="text-purple-700"],
+html.dark [class~="text-purple-600"],
+html.dark [class~="text-orange-700"],
+html.dark [class~="text-orange-600"],
+html.dark [class~="text-sky-700"] {
+  color: #c4b5fd !important;
+}
+
+html.dark [class~="border-slate-100"],
+html.dark [class~="border-slate-200"],
+html.dark [class~="border-slate-200/60"],
+html.dark [class~="border-slate-200/70"],
+html.dark [class~="border-slate-200/80"],
+html.dark [class~="border-slate-300"] {
+  border-color: #334155 !important;
+}
+
+html.dark [class~="border-blue-100"],
+html.dark [class~="border-blue-200"],
+html.dark [class~="border-blue-300"],
+html.dark [class~="border-indigo-100"],
+html.dark [class~="border-indigo-200"],
+html.dark [class~="border-cyan-100"],
+html.dark [class~="border-cyan-200"] {
+  border-color: rgb(96 165 250 / 0.35) !important;
+}
+
+html.dark [class~="border-emerald-100"],
+html.dark [class~="border-emerald-200"],
+html.dark [class~="border-emerald-200/80"],
+html.dark [class~="border-emerald-300"] {
+  border-color: rgb(52 211 153 / 0.35) !important;
+}
+
+html.dark [class~="border-amber-100"],
+html.dark [class~="border-amber-200"],
+html.dark [class~="border-amber-300"] {
+  border-color: rgb(251 191 36 / 0.35) !important;
+}
+
+html.dark [class~="border-rose-100"],
+html.dark [class~="border-rose-200"],
+html.dark [class~="border-rose-200/80"],
+html.dark [class~="border-rose-300"],
+html.dark [class~="border-purple-100"],
+html.dark [class~="border-purple-300"],
+html.dark [class~="border-orange-200"],
+html.dark [class~="border-sky-200"] {
+  border-color: rgb(244 114 182 / 0.3) !important;
+}
+
+html.dark [class~="hover:bg-slate-100"]:hover,
+html.dark [class~="hover:bg-blue-50"]:hover {
+  background-color: #1e293b !important;
+}
+
+html.dark input,
+html.dark select,
+html.dark textarea {
+  color: #e2e8f0;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #64748b;
+}
+
+html.dark .recharts-default-tooltip {
+  background-color: #0f172a !important;
+  border-color: #334155 !important;
+  color: #e2e8f0 !important;
+}
+
+html.dark .recharts-tooltip-label,
+html.dark .recharts-tooltip-item {
+  color: #e2e8f0 !important;
+}
+
+html.dark ::-webkit-scrollbar {
+  background: #020617;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 999px;
+}
