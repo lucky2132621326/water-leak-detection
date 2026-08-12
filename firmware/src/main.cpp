@@ -139,6 +139,27 @@ void setup() {
     // to ~10x.
     Wire.setClock(400000);
 
+    // Ground-truth I2C scan — reports exactly what ACKs on the bus before any
+    // library makes assumptions about what's there. Repeated for a short window
+    // at boot (bring-up aid only) so a wire can be wiggled/reseated live and the
+    // result observed without a reflash each time.
+    for (int pass = 0; pass < 15; pass++) {
+        Serial.printf("[I2C] scanning bus (pass %d/15)...\n", pass + 1);
+        int devicesFound = 0;
+        for (uint8_t addr = 1; addr < 127; addr++) {
+            Wire.beginTransmission(addr);
+            if (Wire.endTransmission() == 0) {
+                Serial.printf("[I2C] device found at 0x%02X\n", addr);
+                devicesFound++;
+            }
+        }
+        if (devicesFound == 0) {
+            Serial.println("[I2C] no devices found at all — check VCC/GND continuity "
+                            "and that SDA/SCL are actually on the pins config.h expects");
+        }
+        delay(1000);
+    }
+
     if (!ina219.begin()) Serial.println("[WARN] INA219 not found at 0x40");
     if (!vibration.begin()) {
         // Not fatal. The backend marks the acoustic channel inactive and
@@ -213,6 +234,22 @@ void loop() {
         waterC = tempSensor.getTempCByIndex(0);
         if (waterC < -100.0f) waterC = NAN;   // DEVICE_DISCONNECTED
     }
+
+    // Human-readable line over USB every telemetry tick, independent of
+    // WiFi/MQTT status — lets the sensors be verified over the serial
+    // monitor alone before the network path is trusted. waterC is already
+    // NAN when the DS18B20 isn't present, and printf prints NAN as "nan"
+    // rather than a misleading 0.0, so no special-casing is needed here.
+    Serial.printf(
+        "[TELEMETRY] Qin=%.3f Qout=%.3f Qbr=%.3f L/min | pulses(in/out/br)=%lu/%lu/%lu | "
+        "V=%.2fV I=%.1fmA P=%.1fmW | water=%.1fC | vib=%s rms=%.4f | pump1=%d pump2=%d servo=%d\n",
+        qIn, qOut, qBranch,
+        (unsigned long)pIn, (unsigned long)pOut, (unsigned long)pBranch,
+        busV, currentMA, powerMW,
+        waterC,
+        vib.hasAccelerometer ? "present" : "NOT-FOUND",
+        vib.rms,
+        pump1On, pump2On, servoDeg);
 
     // Publish a real epoch when NTP has synced, and NOTHING otherwise.
     //

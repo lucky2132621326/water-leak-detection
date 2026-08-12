@@ -65,13 +65,15 @@ Unavailable acoustic or temperature sensors publish JSON `null`, never a fake
 zero. An unsynchronised ESP32 publishes `ts: 0` and `clock_synced: false`; the
 backend substitutes server receive time and exposes a substitution counter.
 
-Raw pulse counts are mandatory so historical flow can be recalculated after
-K-factor calibration. The backend accepts the former flat packet only as a
-compatibility path.
+Raw pulse counts are mandatory in the current nested firmware contract so
+historical flow can be recalculated after K-factor calibration. The ingestion
+adapter also accepts upstream flat ESP32 packets (`device_id`, `q_in_lpm`,
+`q_out_lpm`, `q_branch_lpm`, `current_ma`, and `bus_v`/`voltage_v`) and
+immediately normalizes them into the nested `TelemetryDTO`. No detector or UI
+component branches on the wire format.
 
-There is no pressure transducer on the current rig. The backend labels any
-flow-derived pressure value as `estimated`; mock datasets may carry authored
-logged values.
+There is no pressure transducer on the current rig and the application does not
+manufacture a pressure estimate from flow.
 
 ## `rig/cmd`
 

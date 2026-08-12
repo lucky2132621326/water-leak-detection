@@ -28,7 +28,8 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
 class WhatsAppNotifier:
     def __init__(self, account_sid: str = "", auth_token: str = "", from_number: str = "",
                  to_number: str = "", content_sid: str = "", enabled: bool = False,
-                 notify_replay: bool = False, timeout_sec: float = 8.0,
+                 notify_mock: bool = False, notify_replay: bool | None = None,
+                 timeout_sec: float = 8.0,
                  variable_1: str = "{zone}", variable_2: str = "{event_time}",
                  transport=None, executor=None):
         self.account_sid = account_sid.strip()
@@ -37,7 +38,8 @@ class WhatsAppNotifier:
         self.to_number = self._whatsapp_number(to_number)
         self.content_sid = content_sid.strip()
         self.enabled = bool(enabled)
-        self.notify_replay = bool(notify_replay)
+        # ``notify_replay`` is a migration alias from the retired third mode.
+        self.notify_mock = bool(notify_mock if notify_replay is None else notify_replay)
         self.timeout_sec = float(timeout_sec)
         self.variable_1 = variable_1
         self.variable_2 = variable_2
@@ -69,7 +71,9 @@ class WhatsAppNotifier:
             to_number=os.getenv("TWILIO_WHATSAPP_TO", ""),
             content_sid=os.getenv("TWILIO_CONTENT_SID", ""),
             enabled=enabled,
-            notify_replay=_as_bool(os.getenv("TWILIO_NOTIFY_REPLAY"), False),
+            notify_mock=_as_bool(
+                os.getenv("TWILIO_NOTIFY_MOCK", os.getenv("TWILIO_NOTIFY_REPLAY")), False
+            ),
             timeout_sec=float(os.getenv("TWILIO_TIMEOUT_SEC", "8")),
             variable_1=os.getenv("TWILIO_CONTENT_VARIABLE_1", "{zone}"),
             variable_2=os.getenv("TWILIO_CONTENT_VARIABLE_2", "{event_time}"),
@@ -97,7 +101,9 @@ class WhatsAppNotifier:
         """Queue one notification per alert ID and return whether it was queued."""
         if not self.enabled:
             return False
-        if alert.get("source") == "replay" and not self.notify_replay:
+        # Only physical incidents notify by default. Mock scenarios must never
+        # page an operator unless explicitly opted in.
+        if alert.get("source") != "live" and not self.notify_mock:
             return False
         alert_id = str(alert.get("alert_id") or "")
         if not alert_id:

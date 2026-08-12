@@ -42,8 +42,10 @@
 #define PIN_FLOW_OUT     35    // Flow 2, Q_out
 #define PIN_FLOW_BRANCH  32    // Flow 3, Q_branch (Branch B)
 
-#define PIN_I2C_SDA      21    // INA219 @ 0x40, MPU6050 @ 0x68
-#define PIN_I2C_SCL      22
+// Physically wired SDA->D22, SCL->D21 on this rig (swapped from the original
+// spec's SDA=21/SCL=22) — matched here rather than re-wiring the board.
+#define PIN_I2C_SDA      22    // INA219 @ 0x40, MPU6050 @ 0x68
+#define PIN_I2C_SCL      21
 
 // Relays are ACTIVE-LOW: digitalWrite(pin, LOW) energizes the coil and runs the
 // pump. Both are driven HIGH at boot, before WiFi, so a rig that never connects

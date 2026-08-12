@@ -67,7 +67,7 @@ def repair_timestamp(raw: dict) -> tuple[float, bool]:
     return ts, False
 
 
-def flatten_sample(raw: dict, response: dict = None, leak_active: bool = False) -> dict:
+def flatten_sample(sample: TelemetryDTO, response: dict = None, leak_active: bool = False) -> dict:
     """Normalise a wire-format payload into the flat shape the dashboard charts.
 
     There is deliberately no per-mode branch here — mock and live must flatten
@@ -78,40 +78,38 @@ def flatten_sample(raw: dict, response: dict = None, leak_active: bool = False) 
     detector's opinion, so the dashboard can honestly show "the detector says
     clear while a clamp is actually open".
     """
-    if raw is None:
+    if sample is None:
         return None
+    if isinstance(sample, dict):
+        sample, error = TelemetryValidator.normalize(sample)
+        if sample is None:
+            raise ValueError(f"Cannot flatten invalid telemetry: {error}")
 
-    flow = raw.get("flow") or {}
-    power = raw.get("power") or {}
-    vib = raw.get("vibration") or {}
-    act = raw.get("actuators") or {}
-
-    q_in = float(flow.get("q_in_lpm", 0.0) or 0.0)
-    q_out = float(flow.get("q_out_lpm", 0.0) or 0.0)
-    q_branch = float(flow.get("q_branch_lpm", 0.0) or 0.0)
+    q_in = sample.flow.q_in_lpm
+    q_out = sample.flow.q_out_lpm
+    q_branch = sample.flow.q_branch_lpm
 
     return {
-        "ts": raw.get("ts"),
+        "ts": sample.ts,
         "q_in": q_in,
         "q_out": q_out,
         "q_branch": q_branch,
-        "current_ma": float(power.get("current_ma", 0.0) or 0.0),
-        "bus_v": float(power.get("bus_v", 0.0) or 0.0),
+        "current_ma": sample.power.current_ma,
+        "bus_v": sample.power.bus_v,
         # Topology-aware — never recomputed here with a different formula than
         # the detectors used, which is how the two once drifted apart.
         "residual": (response or {}).get("residual", round(compute_residual(q_in, q_out, q_branch), 3)),
-        "band_mid": vib.get("band_mid"),
-        "vib_rms": vib.get("rms"),
-        "piezo_rms": vib.get("piezo_rms"),
-        # SIMULATED and flagged as such, or absent entirely in live. The flag
-        # travels with the value so no chart can plot it without the caveat.
-        "pressure_bar": (raw.get("pressure") or {}).get("bar"),
-        "pressure_is_simulated": bool(raw.get("pressure")),
-        "water_c": (raw.get("temp") or {}).get("water_c"),
+        "band_mid": sample.vibration.band_mid if sample.vibration.has_accelerometer else None,
+        "vib_rms": sample.vibration.rms if sample.vibration.has_accelerometer else None,
+        "piezo_rms": sample.vibration.piezo_rms,
+        # Mock-only simulated channel; live DTOs always leave it absent.
+        "pressure_bar": sample.pressure.bar if sample.pressure else None,
+        "pressure_is_simulated": bool(sample.pressure and sample.pressure.is_simulated),
+        "water_c": sample.temp.water_c,
         "leak_active": bool(leak_active),
-        "pump_on": bool(act.get("pump1", False)),
-        "pump2_on": bool(act.get("pump2", False)),
-        "servo_deg": int(act.get("servo_deg", 0) or 0),
+        "pump_on": sample.actuators.pump1,
+        "pump2_on": sample.actuators.pump2,
+        "servo_deg": sample.actuators.servo_deg,
     }
 
 
@@ -126,7 +124,8 @@ class TelemetryIngestor:
         self._detection_repo = detection_repo
         self._alert_service = alert_service
 
-        self.pipeline = DetectionPipeline()
+        pipeline_mode = self.source_name if self.source_name in ("mock", "live") else None
+        self.pipeline = DetectionPipeline(mode=pipeline_mode)
         self.latest_response = None
         self.latest_telemetry = None
         self.latest_flat = None
@@ -179,7 +178,8 @@ class TelemetryIngestor:
         nonsense. Called on every mode switch.
         """
         with self._lock:
-            self.pipeline = DetectionPipeline()
+            pipeline_mode = self.source_name if self.source_name in ("mock", "live") else None
+            self.pipeline = DetectionPipeline(mode=pipeline_mode)
             self._gt_run_id = object()
             self._gt_windows = []
             self.latest_response = None
@@ -198,13 +198,13 @@ class TelemetryIngestor:
     def ingest(self, raw: dict, run_id: str = None):
         """Evaluate one wire-format sample. Returns the shaped response, or None
         if the payload was rejected."""
-        is_valid, message = TelemetryValidator.validate(raw)
-        if not is_valid:
+        dto, message = TelemetryValidator.normalize(raw)
+        if dto is None:
             self.rejected_count += 1
             logger.warning(f"[Ingestor:{self.source_name}] rejected telemetry: {message}")
             return None
 
-        dto = TelemetryDTO.from_dict(raw)
+        dto.mode = self.source_name
 
         # Repair an unsynced rig clock before anything reads it. Done here rather
         # than in the validator because the sample is good — only its clock is
@@ -231,27 +231,7 @@ class TelemetryIngestor:
             self._seq += 1
             dto.seq = self._seq
 
-        # P1 is the supply pump. P2 only generates demand, so it says nothing
-        # about whether the loop is pressurised and flowing.
-        pump_on = dto.actuators.pump1
-        result = self.pipeline.process_sample(
-            ts=dto.ts,
-            q_in=dto.flow.q_in_lpm,
-            q_out=dto.flow.q_out_lpm,
-            q_branch=dto.flow.q_branch_lpm,
-            current_ma=dto.power.current_ma,
-            bus_v=dto.power.bus_v,
-            pump_on=pump_on,
-            servo_state_deg=dto.actuators.servo_deg,
-            vibration=dto.vibration,
-            water_c=dto.temp.water_c,
-            pump1=dto.actuators.pump1,
-            pump2=dto.actuators.pump2,
-            # None for every live sample — the firmware publishes no pressure
-            # field, so there is no path by which a real rig reading could carry
-            # one. Mock supplies a SIMULATED value.
-            pressure_bar=dto.pressure.bar if dto.pressure else None,
-        )
+        result = self.pipeline.process_sample(dto)
         response = build_response(result)
 
         # An explicit run_id wins (mock scenario runs); otherwise fall back to
@@ -265,8 +245,8 @@ class TelemetryIngestor:
 
         with self._lock:
             self.latest_response = response
-            self.latest_telemetry = raw
-            self.latest_flat = flatten_sample(raw, response, leak_active=leak_active)
+            self.latest_telemetry = dto.to_dict()
+            self.latest_flat = flatten_sample(dto, response, leak_active=leak_active)
             self.latest_received_at = time.time()
             self.history.append(self.latest_flat)
             if len(self.history) > HISTORY_LIMIT:

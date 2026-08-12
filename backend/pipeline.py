@@ -12,6 +12,7 @@ from backend.fusion.confidence_engine import ConfidenceEngine
 from backend.fusion.fusion_engine import FusionEngine
 from backend.localization.localization_service import LocalizationService
 from backend.mode import get_active_mode
+from backend.models.telemetry import TelemetryDTO
 
 
 class DetectionPipeline:
@@ -33,18 +34,33 @@ class DetectionPipeline:
         #: rather than starting its own clock.
         self.channel_crossed_at = {}
 
-    def process_sample(self, ts, q_in, q_out, q_branch, current_ma, bus_v=12.0,
-                       pump_on=True, servo_state_deg=0, vibration=None,
-                       water_c=None, voltage_v=None, pump1=None, pump2=False,
-                       pressure_bar=None):
-        if voltage_v is not None:
-            bus_v = voltage_v
+    def process_sample(self, sample: TelemetryDTO):
+        """Evaluate one canonical sample.
+
+        Wire-format compatibility belongs to the telemetry adapters.  Keeping a
+        single DTO argument prevents mock/live callers from silently disagreeing
+        about names such as ``voltage_v`` and ``bus_v``.
+        """
+        ts = sample.ts
+        q_in = sample.flow.q_in_lpm
+        q_out = sample.flow.q_out_lpm
+        q_branch = sample.flow.q_branch_lpm
+        current_ma = sample.power.current_ma
+        bus_v = sample.power.bus_v
+        pump_on = sample.actuators.pump1
+        servo_state_deg = sample.actuators.servo_deg
+        vibration = sample.vibration
+        water_c = sample.temp.water_c
+        pump1 = sample.actuators.pump1
+        pump2 = sample.actuators.pump2
+        # Explicitly simulated and mock-only. Live DTOs always carry None.
+        pressure_bar = sample.pressure.bar if sample.pressure else None
         residual = compute_residual(q_in, q_out, q_branch, apply_bias=True)
 
         detector_results = self.detector_manager.process_sample(
             ts, q_in, q_out, q_branch, current_ma, bus_v,
             vibration=vibration, pump_on=pump_on, water_c=water_c,
-            pump1=pump_on if pump1 is None else pump1, pump2=pump2,
+            pump1=pump1, pump2=pump2,
             # Only ever non-None in mock. A live DetectorManager builds no
             # pressure detector, so this argument goes nowhere there.
             pressure_bar=pressure_bar,

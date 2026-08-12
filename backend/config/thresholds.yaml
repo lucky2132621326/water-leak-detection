@@ -94,6 +94,9 @@ cusum:
   # scales with leak duration — a 2-minute leak once kept CUSUM latched for 36
   # minutes after the valve shut.
   cap_multiple: 2.0
+  # Consecutive clean samples that prove the change has ended. This deliberately
+  # resets the accumulator instead of making recovery depend on leak duration.
+  reset_after_normal_samples: 10
 
 acoustic_ml:
   # Supervised classifier on vibration signatures.

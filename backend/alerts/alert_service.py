@@ -29,6 +29,19 @@ from backend.utils.logger import logger
 ALERT_STATUSES = ("ACTIVE", "RESOLVED", "FALSE_POSITIVE")
 
 MINUTES_PER_DAY = 60 * 24
+_ZONE_CONFIDENCE_RANK = {"NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3}
+
+
+def _location_evidence_strength(response: dict) -> tuple[int, int, float]:
+    """Rank causal localization evidence ahead of a default zone guess."""
+    zone = response.get("zone") or "NONE"
+    if zone in ("NONE", "UNKNOWN"):
+        return (0, 0, 0.0)
+    confidence = str(response.get("zone_confidence") or "NONE").upper()
+    basis = str(response.get("zone_basis") or "").lower()
+    causal = int(any(word in basis for word in ("isolation", "isolating", "step test", "learned baseline")))
+    likelihood = float(response.get("likelihood_score") or 0.0)
+    return (_ZONE_CONFIDENCE_RANK.get(confidence, 0), causal, likelihood)
 
 
 class AlertService:
@@ -182,6 +195,9 @@ class AlertService:
             "status": "ACTIVE",
             "is_open": True,
             "zone": response.get("zone") or "UNKNOWN",
+            "zone_confidence": response.get("zone_confidence") or "NONE",
+            "zone_basis": response.get("zone_basis"),
+            "location_evidence_strength": list(_location_evidence_strength(response)),
             "confidence_tier": response.get("confidence_tier") or "NONE",
             "likelihood_score": response.get("likelihood_score") or 0.0,
             "start_ts": ts,
@@ -193,7 +209,6 @@ class AlertService:
             "peak_leak_rate_lpm": round(rate, 3),
             "evidence": response.get("evidence") or "",
             "active_methods": list(response.get("active_methods") or []),
-            "pressure_bar": (response.get("pressure") or {}).get("pressure_bar"),
             "false_positive_warning": response.get("false_positive_warning"),
             "work_order_summary": response.get("work_order_summary"),
             "impact": self.impact.summarize(rate),
@@ -215,12 +230,16 @@ class AlertService:
     def _update(self, alert, response, ts, rate):
         incoming_likelihood = float(response.get("likelihood_score") or 0.0)
         stronger_evidence = incoming_likelihood > float(alert.get("likelihood_score") or 0.0)
+        incoming_location_strength = _location_evidence_strength(response)
+        stored_location_strength = tuple(alert.get("location_evidence_strength") or (0, 0, 0.0))
+        stronger_location = incoming_location_strength > stored_location_strength
         alert["last_seen_ts"] = ts
         alert["duration_sec"] = round(max(0.0, ts - alert["start_ts"]), 1)
         alert["sample_count"] += 1
         alert["leak_rate_lpm"] = round(rate, 3)
-        alert["evidence"] = response.get("evidence") or alert["evidence"]
-        alert["active_methods"] = list(response.get("active_methods") or alert["active_methods"])
+        if stronger_evidence:
+            alert["evidence"] = response.get("evidence") or alert["evidence"]
+            alert["active_methods"] = list(response.get("active_methods") or alert["active_methods"])
 
         # Track the worst observed rate — severity and savings should reflect
         # the peak of the incident, not whatever the last sample happened to be.
@@ -232,27 +251,29 @@ class AlertService:
             alert["likelihood_score"] = incoming_likelihood
             alert["confidence_tier"] = response.get("confidence_tier") or alert["confidence_tier"]
 
-        if response.get("zone") and response["zone"] != "NONE":
+        if stronger_location:
             alert["zone"] = response["zone"]
-        pressure_bar = (response.get("pressure") or {}).get("pressure_bar")
-        if pressure_bar is not None:
-            alert["pressure_bar"] = pressure_bar
-
+            alert["zone_confidence"] = response.get("zone_confidence") or "NONE"
+            alert["zone_basis"] = response.get("zone_basis")
+            alert["location_evidence_strength"] = list(incoming_location_strength)
         incoming_work_order = response.get("work_order_summary") or {}
         stored_work_order = alert.get("work_order_summary") or {}
-        if stronger_evidence and incoming_work_order.get("source") == "llm":
+        if (stronger_evidence or stronger_location) and incoming_work_order.get("source") == "llm" \
+                and incoming_work_order.get("evidence_zone", response.get("zone")) == alert.get("zone"):
             alert["work_order_summary"] = incoming_work_order
-        elif stored_work_order.get("source") != "llm":
+        elif (stored_work_order.get("source") != "llm"
+              or stored_work_order.get("evidence_zone") != alert.get("zone")):
             summary_evidence = {
                 "zone": alert.get("zone") or "UNKNOWN",
                 "likelihood_score": alert.get("likelihood_score") or 0.0,
                 "residual_lpm": alert.get("leak_rate_lpm") or 0.0,
                 "active_methods": alert.get("active_methods") or [],
-                "pressure_bar": alert.get("pressure_bar"),
             }
             alert["work_order_summary"] = {
                 "summary": build_template_summary(summary_evidence),
                 "source": "template",
+                "evidence_zone": alert.get("zone"),
+                "evidence_likelihood_score": alert.get("likelihood_score") or 0.0,
             }
 
         self._persist(alert)

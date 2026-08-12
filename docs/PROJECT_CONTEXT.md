@@ -24,7 +24,7 @@ truth.
 
 ## Current verified state
 
-- Python suite: 153 tests plus 74 subtests passing.
+- Python suite: 159 tests plus 74 subtests passing.
 - TypeScript check and production build passing.
 - ESP32 firmware compiles successfully with PlatformIO / arduinoFFT 2.x.
 - Judge boundary test confirms all public mutations return 403 while the local
@@ -48,10 +48,9 @@ truth.
 | Demand pump relay | GPIO 26, active-low |
 | Branch A pinch servo | GPIO 27, separate servo supply |
 
-The current rig has no pressure transducer and no leak solenoid. Dashboard
-pressure is an explicitly labelled estimate and is not independent detection
-evidence. Physical leaks are opened manually; operator-recorded time windows are
-the live ground truth.
+The current rig has no pressure transducer and no leak solenoid. The dashboard
+does not manufacture a pressure estimate from flow. Physical leaks are opened
+manually; operator-recorded time windows are the live ground truth.
 
 ## Architecture
 

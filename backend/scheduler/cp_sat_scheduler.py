@@ -39,18 +39,18 @@ _ZONE_OF_NODE = {
 
 # Which crew skill a leak location demands.
 _SKILL_FOR_NODE = {
-    "Branch_A": "PIPE_SOLENOID",
-    "Branch_B": "MICRO_LEAK",
-    "Main_Trunk": "MAIN_TRUNK",
+    "Branch_A": "BRANCH_A_REPAIR",
+    "Branch_B": "BRANCH_B_REPAIR",
+    "Main_Trunk": "TRUNK_PIPE_REPAIR",
 }
 
 
 class CPSatWorkOrderScheduler:
     def __init__(self, crews=None, horizon_minutes: int = 24 * 60):
         self.crews = crews or [
-            {"id": "CREW_ALPHA", "skills": ["PIPE_SOLENOID", "HYDRAULIC"], "location": "Zone_1", "status": "AVAILABLE"},
-            {"id": "CREW_BETA", "skills": ["MICRO_LEAK", "PRESSURE_SEAL"], "location": "Zone_2", "status": "AVAILABLE"},
-            {"id": "CREW_GAMMA", "skills": ["MAIN_TRUNK", "HEAVY_REPAIR"], "location": "Zone_3", "status": "AVAILABLE"},
+            {"id": "CREW_ALPHA", "skills": ["BRANCH_A_REPAIR", "HYDRAULIC"], "location": "Zone_1", "status": "AVAILABLE"},
+            {"id": "CREW_BETA", "skills": ["BRANCH_B_REPAIR", "FLOW_DIAGNOSTICS"], "location": "Zone_2", "status": "AVAILABLE"},
+            {"id": "CREW_GAMMA", "skills": ["TRUNK_PIPE_REPAIR", "HEAVY_REPAIR"], "location": "Zone_3", "status": "AVAILABLE"},
         ]
         self.horizon = horizon_minutes
 

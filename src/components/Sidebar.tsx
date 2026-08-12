@@ -70,8 +70,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Droplet className="w-6 h-6 fill-white text-white" />
         </div>
         <div className="overflow-hidden">
-          <h1 className="text-base font-bold text-white tracking-tight leading-tight">
-            Smart Water System
+          <h1 className="brand-wordmark text-lg text-white leading-tight">
+            Jal Netra
           </h1>
           <p className="text-[11px] text-blue-400 font-medium">Analytics & Hardware Rig</p>
         </div>
@@ -113,12 +113,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="mt-auto pt-4 pb-5 px-5 relative overflow-hidden">
         <div className="absolute inset-0 opacity-20 pointer-events-none">
           <svg className="w-full h-full text-blue-500" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <path d="0,70 Q30,50 60,75 T100,60 L100,100 L0,100 Z" fill="currentColor" />
-            <path d="0,80 Q40,65 70,85 T100,75 L100,100 L0,100 Z" fill="currentColor" opacity="0.6" />
+            <path d="M0,70 Q30,50 60,75 T100,60 L100,100 L0,100 Z" fill="currentColor" />
+            <path d="M0,80 Q40,65 70,85 T100,75 L100,100 L0,100 Z" fill="currentColor" opacity="0.6" />
           </svg>
         </div>
         <div className="relative z-10 text-[11px] text-slate-500 leading-relaxed">
-          <p>© 2025 Smart Water System</p>
+          <p>© 2026 Jal Netra</p>
           <p className="text-slate-600">All rights reserved.</p>
         </div>
       </div>

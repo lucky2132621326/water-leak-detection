@@ -15,6 +15,7 @@ from backend.pipeline import DetectionPipeline
 from backend.response.response_builder import build_response
 from backend.benchmark.ground_truth import GroundTruthScorer
 from backend.utils.logger import logger
+from backend.validators.telemetry_validator import TelemetryValidator
 
 
 class BenchmarkScorer:
@@ -35,20 +36,12 @@ class BenchmarkScorer:
         scorer = GroundTruthScorer(ground_truth)
 
         for doc in telemetry_docs:
-            flow = doc["flow"]
-            power = doc["power"]
-            actuators = doc.get("actuators", {})
+            dto, error = TelemetryValidator.normalize(doc)
+            if dto is None:
+                logger.warning(f"[Benchmark] skipped invalid telemetry: {error}")
+                continue
 
-            result = pipeline.process_sample(
-                ts=doc["ts"],
-                q_in=flow["q_in_lpm"],
-                q_out=flow["q_out_lpm"],
-                q_branch=flow.get("q_branch_lpm", 0.0),
-                current_ma=power["current_ma"],
-                voltage_v=power.get("voltage", 12.0),
-                pump_on=actuators.get("pump1", True),
-                servo_state_deg=actuators.get("servo_deg", 0),
-            )
+            result = pipeline.process_sample(dto)
             response = build_response(result)
             self.detection_repo.save_response(response, run_id=run_id)
 

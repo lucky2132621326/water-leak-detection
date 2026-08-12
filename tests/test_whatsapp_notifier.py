@@ -21,11 +21,11 @@ def response(ts=1_754_131_200):
     }
 
 
-def configured_notifier(transport, notify_replay=False):
+def configured_notifier(transport, notify_mock=False):
     return WhatsAppNotifier(
         account_sid="AC_test", auth_token="secret_test_token",
         from_number="+14155238886", to_number="+919999999999",
-        content_sid="HX_test", enabled=True, notify_replay=notify_replay,
+        content_sid="HX_test", enabled=True, notify_mock=notify_mock,
         transport=transport, executor=ImmediateExecutor(),
     )
 
@@ -50,11 +50,15 @@ def test_duplicate_alert_id_is_sent_only_once():
     assert len(calls) == 1
 
 
-def test_replay_notifications_are_opt_in():
+def test_mock_notifications_are_opt_in():
     calls = []
     notifier = configured_notifier(lambda form: calls.append(form) or {"sid": "SM_test"})
-    assert notifier.enqueue(alert(source="replay")) is False
+    assert notifier.enqueue(alert(source="mock")) is False
     assert calls == []
+
+    opted_in = configured_notifier(lambda form: calls.append(form) or {"sid": "SM_test"}, notify_mock=True)
+    assert opted_in.enqueue(alert(source="mock")) is True
+    assert len(calls) == 1
 
 
 def test_alert_service_queues_only_on_incident_creation():

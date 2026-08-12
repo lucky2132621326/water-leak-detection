@@ -31,7 +31,7 @@ export const LocalizationView: React.FC = () => {
           <span>Phase 3: Hydraulic Pipe Branch Localization & Isolation Engine</span>
         </h2>
         <p className="text-xs text-slate-500 mt-1">
-          Differential flow topology analysis and Branch A step-test isolation to narrow the leak to a pipe section and suggest which valve to close.
+          Learned Branch B flow baselines and the Branch A servo isolation test narrow the suspected zone; field verification is required.
         </p>
       </div>
 

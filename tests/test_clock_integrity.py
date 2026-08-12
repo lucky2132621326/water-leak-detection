@@ -108,12 +108,7 @@ class TestMNFIsActuallyExercised(unittest.TestCase):
         in_window = 0
         for t in range(spec.duration_sec + 1):
             dto = TelemetryDTO.from_dict(gen.sample_at(float(t)))
-            result = pipe.process_sample(
-                ts=dto.ts, q_in=dto.flow.q_in_lpm, q_out=dto.flow.q_out_lpm,
-                q_branch=dto.flow.q_branch_lpm, current_ma=dto.power.current_ma,
-                bus_v=dto.power.bus_v, pump_on=dto.actuators.pump1,
-                servo_state_deg=dto.actuators.servo_deg,
-                vibration=dto.vibration, water_c=dto.temp.water_c)
+            result = pipe.process_sample(dto)
             mnf = next(d for d in result["detectors"] if d["method"] == "mnf")
             in_window += bool(mnf["in_night_window"])
         self.assertGreater(in_window, 0, "MNF never evaluated in its own scenario")

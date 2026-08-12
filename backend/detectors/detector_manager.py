@@ -68,7 +68,11 @@ class DetectorManager:
         )
         self.cusum_detector = CUSUMDetector(
             slack_k=thresholds_loader.get("cusum.k_allowance", 0.15),
-            decision_h=thresholds_loader.get("cusum.h_decision_threshold", 5.0)
+            decision_h=thresholds_loader.get("cusum.h_decision_threshold", 5.0),
+            cap_multiple=thresholds_loader.get("cusum.cap_multiple", 2.0),
+            reset_after_normal_samples=thresholds_loader.get(
+                "cusum.reset_after_normal_samples", 10
+            ),
         )
         self.mnf_detector = MNFDetector(
             night_window_start=thresholds_loader.get("mnf.night_window_start", "01:00"),

@@ -30,11 +30,11 @@ TWILIO_WHATSAPP_TO="whatsapp:+91XXXXXXXXXX"
 TWILIO_CONTENT_SID="HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 TWILIO_CONTENT_VARIABLE_1="{zone}"
 TWILIO_CONTENT_VARIABLE_2="{event_time}"
-TWILIO_NOTIFY_REPLAY="false"
+TWILIO_NOTIFY_MOCK="false"
 ```
 
-Replay notifications are disabled by default because the demo replay loops.
-Set `TWILIO_NOTIFY_REPLAY=true` only for a deliberate notification demo.
+Mock notifications are disabled by default because synthetic scenarios can loop.
+Set `TWILIO_NOTIFY_MOCK=true` only for a deliberate notification demo.
 Deduplication is process-local; a durable outbox is the next step if guaranteed
 delivery across restarts is required.
 

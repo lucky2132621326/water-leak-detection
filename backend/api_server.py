@@ -286,7 +286,11 @@ def evaluate_benchmark(body: dict):
 
 
 _ZONE_CONFIDENCE_NUMERIC = {"HIGH": 0.9, "MEDIUM": 0.6, "LOW": 0.3, "NONE": 0.0}
-_ZONE_ISOLATION_VALVE = {"Branch_A": "SOLENOID_VALVE_2", "Branch_B": "SOLENOID_VALVE_3", "Main_Trunk": "MAIN_ISOLATION_VALVE"}
+_ZONE_ISOLATION_VALVE = {
+    "Branch_A": "BRANCH_A_PINCH_SERVO",
+    "Branch_B": None,
+    "Main_Trunk": None,
+}
 
 
 @app.get("/api/localization/current")
@@ -315,25 +319,18 @@ def _publish_command(payload: dict) -> tuple[bool, str]:
 
 @app.post("/api/leak/toggle", dependencies=[Depends(require_api_key)])
 def leak_toggle(body: dict):
-    """Bench controls — the SAME operator actions in both modes.
+    """Control mock injection or publish a firmware-supported live pump command.
 
-    The two modes differ only in what the command reaches:
-      * Live Sensor Mode  → publishes to `rig/cmd`, actuating the real valve.
-      * Mock Data Mode    → mutates the generator's leak state, so the next
-                            synthesized sample already reflects it.
-
-    Either way the resulting telemetry travels the identical
-    ingest → validate → DTO → detect → fuse → localize → alert → impact path.
-    An earlier version refused these in Mock Data Mode, reasoning that mock
-    leaks belong in the scenario. That was wrong: a generator has no hardware
-    constraint, and refusing made the mock environment un-interactive.
+    The live rig has no electronic leak valve or air-bubble actuator. Physical
+    clamp events are recorded through Experiment Control and never translated
+    into invented MQTT commands.
     """
     action = str(body.get("action", "")).upper()
 
     # --- pump ---------------------------------------------------------------
     if "pump_state" in body:
         if _mode == MODE_LIVE:
-            ok, msg = _publish_command({"cmd": "SET_PUMP", "state": "ON" if body["pump_state"] else "OFF"})
+            ok, msg = _publish_command({"pump1": bool(body["pump_state"])})
             return {"success": ok, "message": msg}
         return {"success": False,
                 "error": "Pump control is not modelled in Mock Data Mode — the generator "
@@ -341,12 +338,9 @@ def leak_toggle(body: dict):
 
     # --- air bubbles --------------------------------------------------------
     if "air_bubbles" in body:
-        if _mode == MODE_LIVE:
-            ok, msg = _publish_command({"cmd": "SET_AIR_BUBBLES", "state": "ON" if body["air_bubbles"] else "OFF"})
-            return {"success": ok, "message": msg}
         return {"success": False,
-                "error": "Air-bubble injection is a scenario fault in Mock Data Mode — "
-                         "run the 'sensor_noise' or 'sensor_fault' scenario instead."}
+                "error": "The rig has no air-bubble actuator. Use the sensor_noise or "
+                         "sensor_fault mock scenario for this test."}
 
     # --- leak valve ---------------------------------------------------------
     if action not in ("OPEN", "CLOSE"):
@@ -361,13 +355,14 @@ def leak_toggle(body: dict):
         return {"success": False, "error": "size and ramp_sec must be numbers"}
 
     if _mode == MODE_LIVE:
-        payload = ({"cmd": "SET_VALVE", "valve_id": "leak_valve_1", "state": "OPEN",
-                    "target_lpm": size, "location": location}
-                   if action == "OPEN" else
-                   {"cmd": "SET_VALVE", "valve_id": "leak_valve_1", "state": "CLOSE"})
-        ok, msg = _publish_command(payload)
-        return {"success": ok, "message": msg, "mode": _mode,
-                "target_lpm": size if action == "OPEN" else 0.0}
+        return {
+            "success": False,
+            "error": (
+                "Live leaks are physical clamp openings, not electronic valves. "
+                "Open/close the clamp by hand and timestamp it in Experiment Control."
+            ),
+            "mode": _mode,
+        }
 
     if _mock_source is None:
         return {"success": False, "error": "No mock stream is running. Start one from Mock Scenarios."}

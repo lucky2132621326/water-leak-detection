@@ -1,22 +1,22 @@
-"""Telemetry Ingestion
+"""The single telemetry-ingestion boundary used by Mock and Live modes.
 
-The single door every telemetry sample enters through, regardless of origin.
-
-The system has exactly two operating modes, and they differ ONLY in where
-samples come from:
-
-    MockTelemetrySource  ─┐
-                          ├─→ TelemetryIngestor ─→ validate → DTO → pipeline
-    MqttTelemetrySource  ─┘                        → fusion → confidence
-                                                   → localization → alerts
-                                                   → impact → dashboard
-
-Both sources emit the identical flat wire format defined in docs/MQTT_SPEC.md,
-so mock data is not "fed in differently" — it arrives at the same validator, is
-parsed by the same DTO, and is evaluated by the same detectors. Divergence
-between modes is prevented structurally rather than by convention.
+Imports are lazy so validation adapters can be used independently without
+creating an ingestor/validator import cycle.
 """
-from backend.ingestion.telemetry_source import TelemetrySource
-from backend.ingestion.ingestor import TelemetryIngestor, flatten_sample
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.ingestion.ingestor import TelemetryIngestor, flatten_sample
+    from backend.ingestion.telemetry_source import TelemetrySource
 
 __all__ = ["TelemetrySource", "TelemetryIngestor", "flatten_sample"]
+
+
+def __getattr__(name):
+    if name == "TelemetrySource":
+        from backend.ingestion.telemetry_source import TelemetrySource
+        return TelemetrySource
+    if name in ("TelemetryIngestor", "flatten_sample"):
+        from backend.ingestion.ingestor import TelemetryIngestor, flatten_sample
+        return {"TelemetryIngestor": TelemetryIngestor, "flatten_sample": flatten_sample}[name]
+    raise AttributeError(name)

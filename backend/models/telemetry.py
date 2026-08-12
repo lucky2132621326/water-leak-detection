@@ -175,16 +175,16 @@ class TelemetryDTO:
             device=str(data.get("device", data.get("device_id", "esp32-rig-01"))),
             mode=str(data.get("mode", MODE_LIVE)),
             flow=FlowData(
-                q_in_lpm=float(flow_d.get("q_in_lpm", data.get("q_in_lpm", 0.0))),
-                q_out_lpm=float(flow_d.get("q_out_lpm", data.get("q_out_lpm", 0.0))),
-                q_branch_lpm=float(flow_d.get("q_branch_lpm", data.get("q_branch_lpm", 0.0))),
-                pulses_in=int(flow_d.get("pulses_in", data.get("raw_pulses_in", 0))),
-                pulses_out=int(flow_d.get("pulses_out", data.get("raw_pulses_out", 0))),
-                pulses_branch=int(flow_d.get("pulses_branch", data.get("raw_pulses_branch", 0))),
+                q_in_lpm=float(flow_d.get("q_in_lpm", 0.0)),
+                q_out_lpm=float(flow_d.get("q_out_lpm", 0.0)),
+                q_branch_lpm=float(flow_d.get("q_branch_lpm", 0.0)),
+                pulses_in=int(flow_d.get("pulses_in", 0)),
+                pulses_out=int(flow_d.get("pulses_out", 0)),
+                pulses_branch=int(flow_d.get("pulses_branch", 0)),
             ),
             power=PowerData(
-                bus_v=float(power_d.get("bus_v", power_d.get("voltage", data.get("voltage_v", 12.0)))),
-                current_ma=float(power_d.get("current_ma", data.get("current_ma", 0.0))),
+                bus_v=float(power_d.get("bus_v", power_d.get("voltage", 12.0))),
+                current_ma=float(power_d.get("current_ma", 0.0)),
                 power_mw=float(power_d.get("power_mw", 0.0)),
             ),
             vibration=VibrationData(
@@ -214,16 +214,63 @@ class TelemetryDTO:
                 is_simulated=True,
             ) if data.get("pressure") else None),
             actuators=ActuatorData(
-                pump1=bool(act_d.get("pump1", data.get("pump_on", False))),
+                pump1=bool(act_d.get("pump1", False)),
                 pump2=bool(act_d.get("pump2", False)),
-                servo_deg=int(act_d.get("servo_deg", data.get("servo_deg", 0)) or 0),
+                servo_deg=int(act_d.get("servo_deg", 0) or 0),
             ),
             health=HealthData(
-                uptime_s=int(health_d.get("uptime_s", data.get("uptime_sec", 0))),
-                wifi_rssi=int(health_d.get("wifi_rssi", data.get("wifi_rssi", -60))),
-                free_heap=int(health_d.get("free_heap", data.get("heap_free", 180000))),
+                uptime_s=int(health_d.get("uptime_s", 0)),
+                wifi_rssi=int(health_d.get("wifi_rssi", -60)),
+                free_heap=int(health_d.get("free_heap", 180000)),
             ),
         )
+
+    def to_dict(self) -> dict:
+        """Return the canonical nested telemetry document used for storage/UI."""
+        return {
+            "ts": self.ts,
+            "seq": self.seq,
+            "device": self.device,
+            "device_id": self.device,
+            "mode": self.mode,
+            "flow": {
+                "q_in_lpm": self.flow.q_in_lpm,
+                "q_out_lpm": self.flow.q_out_lpm,
+                "q_branch_lpm": self.flow.q_branch_lpm,
+                "pulses_in": self.flow.pulses_in,
+                "pulses_out": self.flow.pulses_out,
+                "pulses_branch": self.flow.pulses_branch,
+            },
+            "power": {
+                "bus_v": self.power.bus_v,
+                "current_ma": self.power.current_ma,
+                "power_mw": self.power.power_mw,
+            },
+            "vibration": {
+                "rms": self.vibration.rms if self.vibration.has_accelerometer else None,
+                "band_low": self.vibration.band_low if self.vibration.has_accelerometer else None,
+                "band_mid": self.vibration.band_mid if self.vibration.has_accelerometer else None,
+                "band_high": self.vibration.band_high if self.vibration.has_accelerometer else None,
+                "piezo_rms": self.vibration.piezo_rms,
+                "piezo_centroid_hz": self.vibration.piezo_centroid_hz,
+            },
+            "temp": {"water_c": self.temp.water_c},
+            "pressure": ({
+                "bar": self.pressure.bar,
+                "source": "simulated",
+                "is_simulated": True,
+            } if self.pressure else None),
+            "actuators": {
+                "pump1": self.actuators.pump1,
+                "pump2": self.actuators.pump2,
+                "servo_deg": self.actuators.servo_deg,
+            },
+            "health": {
+                "uptime_s": self.health.uptime_s,
+                "wifi_rssi": self.health.wifi_rssi,
+                "free_heap": self.health.free_heap,
+            },
+        }
 
 
 def _optional_float(value):

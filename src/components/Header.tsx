@@ -78,8 +78,8 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="bg-white border-b border-slate-200/80 px-8 py-4 flex items-center justify-between sticky top-0 z-20 shadow-2xs">
       {/* Title & Online Status Badge */}
       <div className="flex items-center space-x-4">
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-          Smart Water Leak Detection
+        <h1 className="brand-wordmark brand-wordmark--header whitespace-nowrap text-3xl">
+          Jal Netra
         </h1>
         <div className={`px-3 py-1 rounded-full text-xs font-semibold flex items-center space-x-1.5 ${
           systemOnline 

@@ -19,13 +19,9 @@ interface LeakControlState {
 }
 
 /**
- * Leak bench — the same operator actions in both operating modes.
- *
- * In Live Sensor Mode these publish to `rig/cmd` and actuate the physical
- * valve. In Mock Data Mode they mutate the generator's leak state, so the very
- * next synthesized sample reflects the change. Either way the resulting
- * telemetry travels the identical detection pipeline, which is the whole point:
- * what you rehearse against mock data is what happens against the rig.
+ * Interactive injection belongs to Mock Data Mode. The physical rig uses
+ * manual clamp openings, so Live Sensor Mode shows the experiment procedure
+ * instead of exposing a fictional electronic leak-valve control.
  */
 export const LeakBenchControls: React.FC<{ mode: OperatingMode; onChanged?: () => void }> = ({
   mode, onChanged,
@@ -75,6 +71,26 @@ export const LeakBenchControls: React.FC<{ mode: OperatingMode; onChanged?: () =
 
   const leaking = Boolean(control?.active) || false;
 
+  if (mode === "live") {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs">
+        <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
+          <Radio className="w-4 h-4 text-blue-600" />
+          <span>Physical Leak Experiment</span>
+        </h3>
+        <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+          Live leaks are created manually with the calibrated worm-drive clamps;
+          this rig has no electronic leak solenoid. Start an experiment, record
+          the clamp opening in <strong>Experiment Control</strong>, then open or
+          close the physical clamp. Telemetry and localization remain automatic.
+        </p>
+        <p className="mt-3 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5">
+          This dashboard does not issue operational valve-control instructions.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
@@ -84,9 +100,8 @@ export const LeakBenchControls: React.FC<{ mode: OperatingMode; onChanged?: () =
             <span>Leak Injection Bench</span>
           </h3>
           <p className="text-[11px] text-slate-500 mt-1 max-w-2xl">
-            {mode === "live"
-              ? "Publishes a valve command to the rig over MQTT. The resulting telemetry is evaluated by the same pipeline as mock data."
-              : "Changes the generated telemetry immediately. The resulting samples run through the identical validation and detection pipeline as live sensors."}
+            Changes the generated telemetry immediately. The resulting samples run
+            through the identical validation and detection pipeline as live sensors.
           </p>
         </div>
         <span className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold border shrink-0 ${

@@ -13,7 +13,8 @@ from backend.alerts.alert_service import AlertService
 
 
 def make_response(ts, is_alarm=True, residual=1.25, zone="Branch_A",
-                  tier="HIGH", likelihood=60.0, methods=None):
+                  tier="HIGH", likelihood=60.0, methods=None,
+                  zone_confidence="HIGH", zone_basis="learned baseline shift"):
     return {
         "ts": ts,
         "residual": residual,
@@ -21,6 +22,8 @@ def make_response(ts, is_alarm=True, residual=1.25, zone="Branch_A",
         "likelihood_score": likelihood,
         "confidence_tier": tier,
         "zone": zone if is_alarm else "NONE",
+        "zone_confidence": zone_confidence if is_alarm else "NONE",
+        "zone_basis": zone_basis if is_alarm else None,
         "evidence": f"flow residual +{residual:.2f} L/min",
         "active_methods": methods or ["mass_balance"],
         "false_positive_warning": {"disclaimer": "indicative", "estimated_false_positive_rate": 0.03},
@@ -97,6 +100,25 @@ class TestIngestion(AlertServiceTestCase):
         self.assertIn("Main_Trunk", summary)
         self.assertIn("66.0%", summary)
         self.assertNotIn("NONE", summary)
+
+    def test_causal_localization_wins_over_higher_score_default_zone(self):
+        self.svc.ingest(make_response(
+            100, zone="Main_Trunk", likelihood=91.0,
+            zone_confidence="LOW", zone_basis="not yet isolated",
+        ))
+        self.svc.ingest(make_response(
+            101, zone="Branch_B", likelihood=72.0,
+            zone_confidence="HIGH", zone_basis="branch flow shifted from learned baseline",
+        ))
+        self.svc.ingest(make_response(
+            102, zone="Main_Trunk", likelihood=95.0,
+            zone_confidence="LOW", zone_basis="not yet isolated",
+        ))
+
+        alert = self.svc.query()[0]
+        self.assertEqual(alert["zone"], "Branch_B")
+        self.assertEqual(alert["zone_confidence"], "HIGH")
+        self.assertIn("Branch_B", alert["work_order_summary"]["summary"])
 
 
 class TestLifecycle(AlertServiceTestCase):

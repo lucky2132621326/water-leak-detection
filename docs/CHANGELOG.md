@@ -104,6 +104,24 @@
   used to bucket its baseline. That definition is not stored in the bundle and
   cannot be verified from it.
 
+## [2026-08-11] — PR architecture reconciliation
+
+- Retained Mock Data and Live Sensors as the only operating modes and added
+  explicit nested/flat ESP32 wire adapters feeding one canonical nested DTO.
+- Made the detection pipeline DTO-only and routed online ingestion plus both
+  benchmark scorers through the same normalization contract.
+- Retained configurable CUSUM recovery, learned/servo localization, the CP-SAT
+  scheduler, raw hardware metadata, and asynchronous WhatsApp alerts.
+- Made causal/high-confidence localization outrank default zone guesses in the
+  incident and work-order summary.
+- Disabled WhatsApp for synthetic mock incidents by default.
+- Removed unsupported live-pressure/solenoid/air-bubble assumptions while
+  retaining the explicitly labelled mock-only simulated-pressure channel. Live
+  commands match the ESP32's actual `pump1`/`pump2`/`servo_deg` contract, and
+  physical leak windows are logged through Experiment Control.
+- Verified 159 Python tests plus 74 subtests, backend self-test, TypeScript,
+  production web build, and ESP32 PlatformIO release compilation.
+
 ## [2026-08-11] — Plausibility guard, three latching bugs, clock integrity
 
 ### Physical plausibility guard (resolves the open `sensor_fault` failure)

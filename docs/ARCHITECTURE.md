@@ -13,8 +13,10 @@ TWO OPERATING MODES — identical after ingestion (docs/OPERATING_MODES.md)
         │                                   │
         └───────────┬───────────────────────┘
                     ↓
+       Wire adapters (nested-v1 / flat-esp32-v1)
+                    ↓
           TelemetryIngestor  (ONE shared path)
-            validate → TelemetryDTO → DetectionPipeline
+            validate → canonical TelemetryDTO → DetectionPipeline
                     ↓
  Python / Express Backend
   ├── Telemetry Collector & Validator
@@ -49,6 +51,16 @@ TWO OPERATING MODES — identical after ingestion (docs/OPERATING_MODES.md)
 3. **No Microservices**:
    - Flat single-process backend architecture for immediate debugging and low overhead.
 
-4. **Single Source of Truth**:
-   - MongoDB database is the sole authority for telemetry collections, detection records, and experiment runs.
+4. **One Canonical Internal Contract**:
+   - Nested `TelemetryDTO` is the only contract used after ingestion.
+   - Mock emits the nested contract. Live accepts both the current nested MQTT
+     document and upstream flat ESP32 fields through explicit adapters.
+   - `DetectionPipeline.process_sample()` accepts a DTO, never mode-specific
+     keyword arguments. Both modes therefore use identical detection,
+     localization, alerting, and reporting logic.
+
+5. **Mode Isolation**:
+   - `jal_netra_live` and `jal_netra_mock` are separate MongoDB databases.
+   - Alert-service state is also separate per mode, preventing synthetic
+     incidents and savings from appearing as live operational results.
 

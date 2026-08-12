@@ -16,8 +16,8 @@ will run on hardware.
 """
 from backend.benchmark.ground_truth import GroundTruthScorer
 from backend.mock.generator import MockTelemetryGenerator
-from backend.models.telemetry import TelemetryDTO
 from backend.pipeline import DetectionPipeline
+from backend.validators.telemetry_validator import TelemetryValidator
 
 
 def score_scenario(spec, step_sec: float = 1.0, grace: float = None) -> dict:
@@ -26,7 +26,7 @@ def score_scenario(spec, step_sec: float = 1.0, grace: float = None) -> dict:
     # and let `night_flow` — the one scenario built to exercise it — pass on the
     # strength of the others while MNF was never evaluated at all.
     generator = MockTelemetryGenerator(spec)
-    pipeline = DetectionPipeline()
+    pipeline = DetectionPipeline(mode="mock")
     scorer = GroundTruthScorer(generator.ground_truth_events(), grace=grace)
 
     zone_votes = {}
@@ -37,24 +37,11 @@ def score_scenario(spec, step_sec: float = 1.0, grace: float = None) -> dict:
         payload = generator.sample_at(t)
         # Parse through the real DTO so mock data traverses the same contract as
         # live data — a schema mistake must break mock too, not only hardware.
-        dto = TelemetryDTO.from_dict(payload)
+        dto, error = TelemetryValidator.normalize(payload)
+        if dto is None:
+            raise ValueError(f"Scenario {spec.id} emitted invalid telemetry: {error}")
 
-        result = pipeline.process_sample(
-            ts=dto.ts,
-            q_in=dto.flow.q_in_lpm,
-            q_out=dto.flow.q_out_lpm,
-            q_branch=dto.flow.q_branch_lpm,
-            current_ma=dto.power.current_ma,
-            bus_v=dto.power.bus_v,
-            pump_on=dto.actuators.pump1,
-            servo_state_deg=dto.actuators.servo_deg,
-            vibration=dto.vibration,
-            water_c=dto.temp.water_c,
-            pump1=dto.actuators.pump1,
-            pump2=dto.actuators.pump2,
-            # SIMULATED, mock only. The live pipeline never receives this.
-            pressure_bar=dto.pressure.bar if dto.pressure else None,
-        )
+        result = pipeline.process_sample(dto)
 
         alarm = result["state"]["is_confirmed"]
         scorer.observe(dto.ts, alarm)

@@ -143,6 +143,14 @@ def build_response(pipeline_result, zone_names=None):
 
     is_reportable = pipeline_result["state"]["is_confirmed"]
     work_order = generate_work_order_summary(evidence_for_summary) if is_reportable else None
+    if work_order:
+        # Provenance lets AlertService detect when a later, stronger
+        # localization makes an earlier LLM/template summary stale.
+        work_order = {
+            **work_order,
+            "evidence_zone": evidence_for_summary["zone"],
+            "evidence_likelihood_score": likelihood_score,
+        }
 
     # Keyed by method for easy lookup by dashboard components (DetectionEngineView etc).
     detectors_by_method = {d["method"]: d for d in pipeline_result["detectors"]}
@@ -156,6 +164,7 @@ def build_response(pipeline_result, zone_names=None):
         "time_window": time_window,
         "zone": localization.get("zone", "NONE"),
         "zone_confidence": localization.get("confidence", "NONE"),
+        "zone_basis": localization.get("basis"),
         "evidence": evidence_text,
         "active_methods": fusion["active_methods"],
         "false_positive_warning": {

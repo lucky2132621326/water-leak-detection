@@ -105,9 +105,8 @@ and `detector:` blocks nothing read that contradicted the live values.
 
 ### D. Honest pressure handling
 The physical rig has no pressure transducer. Firmware does not publish
-`pressure_bar`, and the backend labels any flow-derived pressure as an estimate
-for explanatory display only. It is not treated as independent detection
-evidence because that would count the flow signal twice.
+`pressure_bar`, and the backend does not manufacture a pressure estimate from
+flow because that would restate and double-count the mass-balance signal.
 
 ### E. Two modes replacing Replay
 Replay removed as an operating mode. `ReplayRunner` → `BenchmarkScorer` (kept —
@@ -237,5 +236,5 @@ are live-only (generator doesn't model them) and say so when refused.
 | `docs/TROUBLESHOOTING.md` | Including the dual-MongoDB silent failure |
 | `docs/MQTT_SPEC.md` | Wire format — the contract both sources honour |
 | `docs/DATABASE_SCHEMA.md` | 7 collections incl. `alerts`, `events`, `source` tags |
-| `firmware/docs/PINOUT.md` | Pins + pressure transducer wiring/calibration |
+| `firmware/docs/PINOUT.md` | Current rig pins, wiring, and safety notes |
 | `README.md` | Setup and run instructions |

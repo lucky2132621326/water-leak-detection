@@ -154,7 +154,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const residual = Number((qIn - (qOut + qBranch)).toFixed(2));
   const residualPercent = qIn > 0 ? Number(((residual / qIn) * 100).toFixed(2)) : 0;
   const currentAmp = Number(((latestTelemetry?.latest?.current_ma ?? 0) / 1000).toFixed(2));
-  const voltage = latestTelemetry?.latest?.voltage_v ?? 0;
+  const voltage = latestTelemetry?.latest?.bus_v ?? latestTelemetry?.latest?.voltage_v ?? 0;
   const isLeak = latestTelemetry?.leak_active ?? false;
   const isPumpOn = latestTelemetry?.pump_on ?? false;
 

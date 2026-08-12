@@ -1,8 +1,8 @@
 """Telemetry contract tests — the wire format between firmware, backend and UI.
 
-The schema is defined in docs/MQTT_SPEC.md (spec Part G) and is **nested**. The
-old flat format is gone: the ESP32 is reflashed for this rig, so nothing emits
-it, and a parser for a format nothing produces is dead code.
+The canonical schema is nested. The adapter boundary also accepts the upstream
+flat ESP32 contract so hardware firmware can migrate independently while every
+downstream detector sees the same typed DTO.
 
 Two fields that used to exist are asserted ABSENT, because their hardware does
 not exist on this rig:
@@ -215,6 +215,23 @@ class TestIngestion(unittest.TestCase):
         self.ingestor.ingest(rig_payload(ts=1_800_000_000))
         self.ingestor.ingest(rig_payload(ts=1_800_000_001))
         self.assertEqual(self.ingestor.sample_count, 2)
+
+    def test_flat_esp32_packet_populates_canonical_dashboard_values(self):
+        payload = {
+            "ts": 1_800_000_000,
+            "device_id": "esp32-flat-01",
+            "q_in_lpm": 5.2,
+            "q_out_lpm": 5.1,
+            "q_branch_lpm": 1.4,
+            "current_ma": 421.0,
+            "bus_v": 11.9,
+            "pump_on": True,
+        }
+        self.assertIsNotNone(self.ingestor.ingest(payload))
+        self.assertEqual(self.ingestor.latest_flat["q_in"], 5.2)
+        self.assertEqual(self.ingestor.latest_flat["bus_v"], 11.9)
+        self.assertEqual(self.ingestor.latest_telemetry["device"], "esp32-flat-01")
+        self.assertEqual(self.ingestor.latest_telemetry["power"]["bus_v"], 11.9)
 
     def test_clean_flow_raises_no_alarm(self):
         response = self._run(60)
