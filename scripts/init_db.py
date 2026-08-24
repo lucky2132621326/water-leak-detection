@@ -30,7 +30,6 @@ def init_one(db, name: str):
     db.leak_events.create_index([("open_ts", -1)])
     db.leak_events.create_index([("run_id", 1), ("open_ts", 1)])
     db.experiment_runs.create_index([("run_id", 1)], unique=True)
-    db.work_orders.create_index([("id", 1)], unique=True)
     db.alerts.create_index([("start_ts", -1)])
     db.events.create_index([("ts", -1)])
     # Redundant with the database itself, and indexed anyway so a mis-stamped

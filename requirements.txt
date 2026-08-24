@@ -10,7 +10,6 @@ scipy>=1.10.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 openai>=1.30.0
-ortools==9.12.4544
 
 # --- acoustic ML classifier --------------------------------------------------
 # Pinned to a minor line, not a floor. A joblib bundle is pickled against the

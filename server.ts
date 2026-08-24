@@ -97,8 +97,7 @@ async function startServer() {
       }
       const upstream = await fetch(url, init);
 
-      // The printable experiment report comes back as HTML, not JSON — pass it
-      // through verbatim so it can be opened in a tab and saved as a PDF.
+      // Pass non-JSON responses through verbatim for endpoints that serve text.
       const contentType = upstream.headers.get("content-type") ?? "";
       if (!contentType.includes("application/json")) {
         const text = await upstream.text();
@@ -131,9 +130,6 @@ async function startServer() {
     { method: "post", path: "/api/leak/toggle" },
     { method: "get", path: "/api/benchmark/runs" },
     { method: "post", path: "/api/benchmark/evaluate" },
-    { method: "get", path: "/api/localization/current" },
-    { method: "get", path: "/api/work-orders" },
-    { method: "post", path: "/api/work-orders/dispatch" },
     { method: "get", path: "/api/impact/config" },
     { method: "get", path: "/api/impact/current" },
     { method: "post", path: "/api/impact/simulate" },
@@ -167,8 +163,6 @@ async function startServer() {
     { method: "post", path: "/api/alerts/:alertId/resolve", upstream: (p) => `/api/alerts/${encodeURIComponent(p.alertId)}/resolve` },
     { method: "post", path: "/api/alerts/:alertId/false-positive", upstream: (p) => `/api/alerts/${encodeURIComponent(p.alertId)}/false-positive` },
     { method: "post", path: "/api/alerts/:alertId/reopen", upstream: (p) => `/api/alerts/${encodeURIComponent(p.alertId)}/reopen` },
-    { method: "get", path: "/api/reports/experiment/:runId", upstream: (p) => `/api/reports/experiment/${encodeURIComponent(p.runId)}` },
-    { method: "get", path: "/api/reports/experiment/:runId/html", upstream: (p) => `/api/reports/experiment/${encodeURIComponent(p.runId)}/html` },
   ];
 
   for (const route of PARAM_ROUTES) {

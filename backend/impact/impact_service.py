@@ -1,7 +1,7 @@
 """Impact Service — the single composition point for impact analysis.
 
 Everything downstream (the API's /api/impact routes, the alert records, the
-work-order text, the printable experiment report) calls this rather than
+work-order text and dashboard views) calls this rather than
 assembling the four calculators itself, so a leak's stated severity and cost
 can never disagree between two surfaces.
 """

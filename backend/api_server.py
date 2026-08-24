@@ -1,5 +1,4 @@
 """FastAPI Bridge
-
 Owns the operating-mode switch. There are exactly two modes — Mock Data and
 Live Sensor — and they differ only in which TelemetrySource is attached. Every
 sample from either source runs through the same TelemetryIngestor and
@@ -17,7 +16,6 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from backend.ingestion import TelemetryIngestor, flatten_sample
@@ -30,16 +28,13 @@ from backend.mock.leak_control import PRESETS, VALID_LOCATIONS, MAIN as MAIN_TRU
 from backend.pipeline import DetectionPipeline
 from backend.response.response_builder import build_response
 from backend.repositories.telemetry_repository import TelemetryRepository
-from backend.repositories.detection_repository import LeakEventRepository, WorkOrderRepository
+from backend.repositories.detection_repository import LeakEventRepository
 from backend.benchmark.benchmark_scorer import BenchmarkScorer
-from backend.scheduler.cp_sat_scheduler import CPSatWorkOrderScheduler
-from backend.localization.localization_service import LocalizationService
 from backend.alerts.alert_service import get_alert_service
 from backend.analytics.benchmark_analytics import BenchmarkAnalytics
 from backend.fusion.fusion_engine import FusionEngine
 from backend.impact.impact_service import ImpactService, analyze_impact
 from backend.impact.severity import SeverityClassifier
-from backend.reports.experiment_report import ExperimentReportGenerator
 from backend.config.config_loader import impact_loader, thresholds_loader, config_loader
 from backend.services.experiment_service import get_experiment_service
 from backend.utils.logger import logger
@@ -89,7 +84,6 @@ _mode_lock = threading.RLock()
 
 # Built lazily so importing this module never requires MongoDB to be reachable.
 _impact_singleton = None
-_report_generator = None
 
 
 def _alerts():
@@ -101,13 +95,6 @@ def _impact_service() -> ImpactService:
     if _impact_singleton is None:
         _impact_singleton = ImpactService()
     return _impact_singleton
-
-
-def _reports() -> ExperimentReportGenerator:
-    global _report_generator
-    if _report_generator is None:
-        _report_generator = ExperimentReportGenerator()
-    return _report_generator
 
 
 def _active_source():
@@ -343,31 +330,6 @@ def evaluate_benchmark(body: dict):
     return runner.run(run_id)
 
 
-_ZONE_CONFIDENCE_NUMERIC = {"HIGH": 0.9, "MEDIUM": 0.6, "LOW": 0.3, "NONE": 0.0}
-_ZONE_ISOLATION_VALVE = {
-    "Branch_A": "BRANCH_A_PINCH_SERVO",
-    "Branch_B": None,
-    "Main_Trunk": None,
-}
-
-
-@app.get("/api/localization/current")
-def localization_current():
-    resp = _ingestor.latest_response
-    if not resp or resp.get("zone") in (None, "NONE"):
-        return {"localized": False, "node": "NONE", "branch": "NONE", "distance_meters": 0.0, "confidence": 0.0}
-    zone = resp["zone"]
-    return {
-        "localized": True,
-        "node": zone,
-        "branch": zone,
-        "distance_meters": None,  # not measurable without a distributed flow/acoustic sensor network
-        "confidence": _ZONE_CONFIDENCE_NUMERIC.get(resp["zone_confidence"], 0.0),
-        "isolation_valve_suggested": _ZONE_ISOLATION_VALVE.get(zone),
-        "likelihood_score": resp["likelihood_score"],
-    }
-
-
 def _publish_command(payload: dict) -> tuple[bool, str]:
     """Publish to the rig's `rig/cmd` topic (docs/MQTT_SPEC.md). The firmware
     subscribes to it; this is the only path by which the dashboard can actuate
@@ -495,50 +457,6 @@ def ground_truth_start(body: dict = None):
 @app.post("/api/experiments/ground-truth/stop", dependencies=[Depends(require_api_key)])
 def ground_truth_stop():
     return get_experiment_service().stop_ground_truth_leak()
-
-
-@app.get("/api/work-orders")
-def list_work_orders():
-    return WorkOrderRepository().list_all()
-
-
-@app.post("/api/work-orders/dispatch", dependencies=[Depends(require_api_key)])
-def dispatch_work_order(body: dict):
-    scheduler = CPSatWorkOrderScheduler()
-
-    # A work order can be raised straight from an Alert Center incident, in
-    # which case the severity comes from the incident's peak observed rate
-    # rather than an operator retyping it.
-    alert_id = body.get("alert_id")
-    alert = _alerts().get(alert_id) if alert_id else None
-    if alert:
-        location = alert["zone"]
-        severity = alert["peak_leak_rate_lpm"]
-        leak_event_id = alert["alert_id"]
-    else:
-        location = body.get("location", "Branch_A")
-        severity = float(body.get("severity", 1.25))
-        leak_event_id = body.get("leak_event_id", int(time.time()))
-
-    # Schedule the new leak alongside every still-open incident, so CP-SAT can
-    # sequence crews across the real outstanding workload rather than treating
-    # each dispatch as if it were the only job.
-    pending = [{
-        "id": a["alert_id"], "location_node": a["zone"], "severity_lpm": a["peak_leak_rate_lpm"],
-    } for a in _alerts().query(status="ACTIVE") if a["alert_id"] != alert_id]
-
-    work_orders = scheduler.optimize_schedule(
-        [{"id": leak_event_id, "location_node": location, "severity_lpm": severity}] + pending
-    )
-    wo = next((w for w in work_orders if w["leak_id"] == leak_event_id), work_orders[0])
-    wo["id"] = wo.pop("work_order_id")
-    wo["alert_id"] = alert_id
-    wo["impact"] = _impact_service().summarize(severity)
-    WorkOrderRepository().insert(wo)
-    # insert() lets Mongo stamp an ObjectId onto the dict, which is not
-    # JSON-serializable — drop it before returning.
-    wo.pop("_id", None)
-    return {"success": True, "work_order": wo}
 
 
 # --- Impact analysis --------------------------------------------------------
@@ -900,24 +818,3 @@ def system_status():
         "healthy": mongo_ok and (mqtt_ok or _mode == MODE_MOCK) and last is not None,
         "timestamp": int(time.time()),
     }
-
-
-# --- Automatic experiment reports -------------------------------------------
-
-@app.get("/api/reports/experiment/{run_id}")
-def experiment_report(run_id: str):
-    return _reports().build(run_id)
-
-
-@app.get("/api/reports/experiment/{run_id}/html", response_class=HTMLResponse)
-def experiment_report_html(run_id: str):
-    """Standalone printable report. The browser's Save-as-PDF turns this into
-    the PDF deliverable without pulling in a PDF toolchain."""
-    generator = _reports()
-    report = generator.build(run_id)
-    body = generator.render_html(report)
-    return HTMLResponse(
-        f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-        f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"<title>Experiment Report — {run_id}</title></head><body>{body}</body></html>"
-    )

@@ -1,5 +1,5 @@
-"""Detection & Leak Event Repository — persists fused detection results, ground
-truth and work orders to MongoDB.
+"""Detection & Leak Event Repository — persists fused detection results and
+ground truth to MongoDB.
 
 `leak_events` is now the ground-truth store for the whole project. On the rig a
 leak is a human opening a worm-drive clamp on a tee stub; there is no solenoid
@@ -107,15 +107,3 @@ class LeakEventRepository(ModeScopedRepository):
 
     def list_recent(self, limit=100):
         return list(self.db.leak_events.find({}).sort("open_ts", -1).limit(int(limit)))
-
-
-class WorkOrderRepository(ModeScopedRepository):
-    def list_all(self):
-        # Project out _id — ObjectId is not JSON-serializable and these rows go
-        # straight out over the API.
-        return list(self.db.work_orders.find({}, {"_id": 0}).sort("scheduled_start", -1))
-
-    def insert(self, work_order: dict):
-        self.db.work_orders.insert_one(self.stamp(work_order))
-        logger.info(f"[WorkOrderRepository] Stored work order {work_order.get('id')}")
-        return work_order

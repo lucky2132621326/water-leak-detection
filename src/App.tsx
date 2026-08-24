@@ -5,12 +5,9 @@ import { DashboardView } from "./components/DashboardView";
 import { LiveMonitorView } from "./components/LiveMonitorView";
 import { ExperimentsView } from "./components/ExperimentsView";
 import { DetectionEngineView } from "./components/DetectionEngineView";
-import { LocalizationView } from "./components/LocalizationView";
 import { AnalyticsView } from "./components/AnalyticsView";
 import { CalibrationView } from "./components/CalibrationView";
-import { WorkOrderSchedulerView } from "./components/WorkOrderSchedulerView";
 import { ScenarioLabView } from "./components/ScenarioLabView";
-import { ReportsView } from "./components/ReportsView";
 import { AlertsView } from "./components/AlertsView";
 import { SettingsView } from "./components/SettingsView";
 import { ImpactSimulatorView } from "./components/ImpactSimulatorView";
@@ -345,8 +342,6 @@ export default function App() {
             <DetectionEngineView evaluation={latestTelemetry?.evaluation} />
           )}
 
-          {activeTab === "localization" && <LocalizationView />}
-
           {activeTab === "impact-simulator" && <ImpactSimulatorView />}
 
           {activeTab === "scenarios" && <ScenarioLabView onModeChange={fetchState} />}
@@ -354,10 +349,6 @@ export default function App() {
           {activeTab === "analytics" && <AnalyticsView />}
 
           {activeTab === "calibration" && <CalibrationView />}
-
-          {activeTab === "work-orders" && <WorkOrderSchedulerView />}
-
-          {activeTab === "reports" && <ReportsView />}
 
           {activeTab === "alerts" && <AlertsView readOnly={readOnly} />}
 

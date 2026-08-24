@@ -29,7 +29,7 @@ LEGACY_DB_NAME = os.getenv("MONGO_DB_NAME", "water_leak_detection")
 #: an unexpected collection is reported instead of silently migrated.
 COLLECTIONS = (
     "telemetry", "detections", "leak_events",
-    "experiment_runs", "work_orders", "alerts", "events",
+    "experiment_runs", "alerts", "events",
 )
 
 

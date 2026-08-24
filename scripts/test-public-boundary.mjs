@@ -68,7 +68,6 @@ try {
     ["/api/experiments/stop", {}],
     ["/api/experiments/ground-truth/start", {}],
     ["/api/experiments/ground-truth/stop", {}],
-    ["/api/work-orders/dispatch", {}],
     ["/api/alerts/test/resolve", {}],
     ["/api/impact/simulate", {}],
     ["/api/docs/README.md", { content: "blocked" }],

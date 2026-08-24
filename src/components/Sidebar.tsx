@@ -4,12 +4,9 @@ import {
   Radio,
   FlaskConical,
   Droplets,
-  MapPin,
   RotateCcw,
   BarChart3,
   Sliders,
-  ClipboardList,
-  FileText,
   Bell,
   Droplet,
   Calculator,
@@ -21,13 +18,10 @@ export type NavTab =
   | "live-monitoring"
   | "experiment-control"
   | "leak-detection"
-  | "localization"
   | "impact-simulator"
   | "scenarios"
   | "analytics"
   | "calibration"
-  | "work-orders"
-  | "reports"
   | "alerts"
   | "leak-history"
   | "settings";
@@ -50,13 +44,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "live-monitoring", label: "Live Monitoring", icon: <Radio className="w-5 h-5" /> },
     { id: "experiment-control", label: "Experiment Control", icon: <FlaskConical className="w-5 h-5" />, operatorOnly: true },
     { id: "leak-detection", label: "Leak Detection", icon: <Droplets className="w-5 h-5" /> },
-    { id: "localization", label: "Localization", icon: <MapPin className="w-5 h-5" /> },
     { id: "impact-simulator", label: "Impact Simulator", icon: <Calculator className="w-5 h-5" />, operatorOnly: true },
     { id: "scenarios", label: "Mock Scenarios", icon: <RotateCcw className="w-5 h-5" />, operatorOnly: true },
     { id: "analytics", label: "Analytics", icon: <BarChart3 className="w-5 h-5" />, operatorOnly: true },
     { id: "calibration", label: "Calibration", icon: <Sliders className="w-5 h-5" />, operatorOnly: true },
-    { id: "work-orders", label: "Work Orders", icon: <ClipboardList className="w-5 h-5" />, operatorOnly: true },
-    { id: "reports", label: "Reports", icon: <FileText className="w-5 h-5" /> },
     { id: "alerts", label: "Alert Center", icon: <Bell className="w-5 h-5" />, badge: unreadAlertsCount },
     { id: "leak-history", label: "Leak History", icon: <History className="w-5 h-5" /> }
   ];

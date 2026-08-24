@@ -62,18 +62,6 @@ export interface ReplayRun {
   latency_sec: number;
 }
 
-export interface WorkOrder {
-  id: string;
-  leak_event_id: number;
-  location_node: string;
-  severity_lpm: number;
-  priority: string;
-  assigned_crew: string;
-  scheduled_start: string;
-  estimated_hrs: number;
-  status: string;
-}
-
 export interface FileNode {
   name: string;
   path: string;
@@ -263,55 +251,6 @@ export interface SavingsSummary {
   equivalents: Equivalents;
   basis: string;
 }
-
-// --- Automatic experiment reports (backend/reports/*) -----------------------
-
-export interface ReportLeakEvent {
-  location_node: string;
-  severity_lpm: number;
-  start_ts: number | null;
-  stop_ts: number | null;
-  start_offset_sec: number | null;
-  duration_sec: number | null;
-  is_ground_truth: boolean;
-  notes: string;
-  impact: ImpactSummary;
-  volume_lost_litres: number | null;
-}
-
-export interface ExperimentReport {
-  run_id: string;
-  error?: string;
-  generated_at: number;
-  generated_at_human: string;
-  info: {
-    run_id: string;
-    operator: string;
-    date: string;
-    duration_sec: number;
-    sample_count: number;
-    pump_mode: string;
-    location: string;
-    notes: string;
-    start_ts: number;
-    end_ts: number;
-  };
-  leak_events: ReportLeakEvent[];
-  metrics: {
-    precision?: number;
-    recall?: number;
-    f1_score?: number;
-    true_positives?: number;
-    false_positives?: number;
-    false_negatives?: number;
-    true_negatives?: number;
-    avg_latency_sec?: number | null;
-  };
-  impact: ImpactAnalysis;
-  conclusions: string[];
-  disclaimer: string;
-}
-
 
 // --- Operating modes ---------------------------------------------------------
 
