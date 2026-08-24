@@ -13,6 +13,8 @@ venv/
 .pio/
 .vscode/
 firmware/src/secrets.h
+**/secrets.h
+!**/secrets.example.h
 data/
 backend/calibration/calibration_data.json
 .tools/

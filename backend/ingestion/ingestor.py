@@ -91,9 +91,14 @@ def flatten_sample(sample: TelemetryDTO, response: dict = None, leak_active: boo
 
     return {
         "ts": sample.ts,
+        "seq": sample.seq,
+        "device": sample.device,
         "q_in": q_in,
         "q_out": q_out,
         "q_branch": q_branch,
+        "pulses_in": sample.flow.pulses_in,
+        "pulses_out": sample.flow.pulses_out,
+        "pulses_branch": sample.flow.pulses_branch,
         "current_ma": sample.power.current_ma,
         "bus_v": sample.power.bus_v,
         # Topology-aware — never recomputed here with a different formula than
@@ -138,6 +143,15 @@ class TelemetryIngestor:
         #: means NTP has not synced — worth surfacing, not worth dropping data for.
         self.clock_substituted_count = 0
         self._seq = 0
+        #: First device_id seen on this stream. A second, different device_id
+        #: publishing to the same topic means two publishers are pretending to
+        #: be the same rig — worth surfacing loudly, not silently blending.
+        self.expected_device_id = None
+        self.unexpected_device_ids = set()
+        self._device_last_seq = {}
+        self.duplicate_count = 0
+        self.out_of_order_count = 0
+        self.dropped_estimate = 0
         #: Cached open ground-truth windows for the current run.
         self._gt_run_id = object()   # sentinel: never equal to a real run_id
         self._gt_windows = []
@@ -192,7 +206,49 @@ class TelemetryIngestor:
             self.sample_count = 0
             self.clock_substituted_count = 0
             self._seq = 0
+            self.expected_device_id = None
+            self.unexpected_device_ids = set()
+            self._device_last_seq = {}
+            self.duplicate_count = 0
+            self.out_of_order_count = 0
+            self.dropped_estimate = 0
         logger.info(f"[Ingestor:{self.source_name}] detector state reset")
+
+    def _track_publisher(self, raw: dict) -> None:
+        """Flag a second device claiming this stream, and count duplicate /
+        out-of-order / dropped packets from the device's own sequence number.
+
+        This runs on the RAW payload's `device`/`seq`, before the fallback
+        auto-numbering below can paper over a device that never sends one.
+        """
+        device = raw.get("device")
+        if device is None:
+            return
+        with self._lock:
+            if self.expected_device_id is None:
+                self.expected_device_id = device
+            elif device != self.expected_device_id and device not in self.unexpected_device_ids:
+                self.unexpected_device_ids.add(device)
+                logger.warning(
+                    f"[Ingestor:{self.source_name}] telemetry from unexpected device "
+                    f"'{device}' (stream established by '{self.expected_device_id}') — "
+                    f"possible second publisher on rig/telemetry"
+                )
+
+            raw_seq = raw.get("seq")
+            try:
+                seq_int = int(raw_seq)
+            except (TypeError, ValueError):
+                return
+            last_seq = self._device_last_seq.get(device)
+            if last_seq is not None:
+                if seq_int == last_seq:
+                    self.duplicate_count += 1
+                elif seq_int < last_seq:
+                    self.out_of_order_count += 1
+                elif seq_int > last_seq + 1:
+                    self.dropped_estimate += seq_int - last_seq - 1
+            self._device_last_seq[device] = seq_int
 
     # --- the shared path --------------------------------------------------
     def ingest(self, raw: dict, run_id: str = None):
@@ -205,6 +261,7 @@ class TelemetryIngestor:
             return None
 
         dto.mode = self.source_name
+        self._track_publisher(raw)
 
         # Repair an unsynced rig clock before anything reads it. Done here rather
         # than in the validator because the sample is good — only its clock is
@@ -318,6 +375,11 @@ class TelemetryIngestor:
                 "clock_substituted_count": self.clock_substituted_count,
                 "latest_received_at": self.latest_received_at,
                 "device_status": self.latest_device_status,
+                "expected_device_id": self.expected_device_id,
+                "unexpected_device_ids": sorted(self.unexpected_device_ids),
+                "duplicate_count": self.duplicate_count,
+                "out_of_order_count": self.out_of_order_count,
+                "dropped_estimate": self.dropped_estimate,
             }
 
     def recent_history(self):

@@ -1,5 +1,5 @@
 import React from "react";
-import { Cpu, Wifi, Database, Activity } from "lucide-react";
+import { Cpu, Wifi, Database, Activity, AlertTriangle } from "lucide-react";
 
 export interface SystemStatus {
   mode: "live" | "mock";
@@ -7,6 +7,14 @@ export interface SystemStatus {
   mqtt: { connected: boolean; detail: string };
   mongodb: { connected: boolean; telemetry_records: number | null; detail: string };
   pipeline: { receiving: boolean; detail: string };
+  publisher?: {
+    expected_device_id: string | null;
+    unexpected_device_ids: string[];
+    duplicate_publisher_suspected: boolean;
+    duplicate_packets: number;
+    out_of_order_packets: number;
+    dropped_estimate: number;
+  };
   healthy: boolean;
   timestamp: number;
 }
@@ -25,9 +33,25 @@ export const SystemStatusRow: React.FC<{ status?: SystemStatus | null }> = ({ st
   // on the actual sub-objects, not just `status` being truthy, so a malformed
   // response degrades to "unknown" instead of crashing the whole dashboard.
   const unknown = !status || !status.rig || !status.mqtt || !status.mongodb || !status.pipeline;
+  const publisher = status?.publisher;
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+    <>
+      {publisher?.duplicate_publisher_suspected && (
+        <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 flex items-start gap-2.5">
+          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+          <div className="text-xs text-rose-800">
+            <div className="font-extrabold uppercase tracking-wide">Second publisher detected</div>
+            <div className="font-medium opacity-90">
+              Expected device <span className="font-mono">{publisher.expected_device_id}</span>, but also received
+              telemetry claiming to be <span className="font-mono">{publisher.unexpected_device_ids.join(", ")}</span>.
+              Something other than the real rig is publishing to rig/telemetry — check for a stray script or a second
+              bridge instance before trusting these readings.
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
       <StatusCard
         title="ESP32 Rig"
         icon={<Cpu className="w-6 h-6" />}
@@ -69,7 +93,8 @@ export const SystemStatusRow: React.FC<{ status?: SystemStatus | null }> = ({ st
         value={unknown ? "—" : status!.pipeline.receiving ? "Running" : "No Data"}
         detail={unknown ? "status unavailable" : status!.pipeline.detail}
       />
-    </div>
+      </div>
+    </>
   );
 };
 

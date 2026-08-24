@@ -15,6 +15,11 @@ MAX_BUS_VOLTAGE = 24.0
 # a genuinely fast legitimate flow is never rejected, while still catching the
 # 100+ L/min bursts noise produces.
 MAX_FLOW_LPM = 40.0
+# Bump alongside firmware/src/config.h's SCHEMA_VERSION on any wire-format
+# change. A packet naming a different version is rejected rather than
+# misread — silently reinterpreting an unknown layout is how a renamed or
+# reordered field turns into a plausible-looking wrong number.
+SUPPORTED_SCHEMA_VERSIONS = (1,)
 
 
 class TelemetryValidator:
@@ -22,6 +27,20 @@ class TelemetryValidator:
     def normalize(raw_data: dict) -> tuple[TelemetryDTO | None, str]:
         """Return the canonical DTO, or a human-readable rejection reason."""
         try:
+            # isinstance, not a bare .get(): a non-dict payload must fail the
+            # same "not a valid JSON dictionary" path normalize_telemetry()
+            # already defines below, not a different AttributeError here.
+            schema_version = raw_data.get("schema_version") if isinstance(raw_data, dict) else None
+            if schema_version is not None and schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+                logger.warning(
+                    f"Rejected telemetry: unsupported schema_version={schema_version} "
+                    f"(supported: {SUPPORTED_SCHEMA_VERSIONS})"
+                )
+                return None, (
+                    f"Unsupported schema_version {schema_version} — firmware and backend "
+                    "have drifted apart, update one to match"
+                )
+
             dto = normalize_telemetry(raw_data).dto
 
             if dto.flow.q_in_lpm < 0 or dto.flow.q_out_lpm < 0 or dto.flow.q_branch_lpm < 0:

@@ -887,6 +887,16 @@ def system_status():
             "receiving": last is not None,
             "detail": "processing samples" if last is not None else "no samples yet",
         },
+        "publisher": {
+            "expected_device_id": _ingestor.expected_device_id,
+            "unexpected_device_ids": sorted(_ingestor.unexpected_device_ids),
+            # A non-empty list here means two things published to rig/telemetry
+            # claiming different device_ids — investigate before trusting the feed.
+            "duplicate_publisher_suspected": bool(_ingestor.unexpected_device_ids),
+            "duplicate_packets": _ingestor.duplicate_count,
+            "out_of_order_packets": _ingestor.out_of_order_count,
+            "dropped_estimate": _ingestor.dropped_estimate,
+        },
         "healthy": mongo_ok and (mqtt_ok or _mode == MODE_MOCK) and last is not None,
         "timestamp": int(time.time()),
     }

@@ -26,9 +26,12 @@ MQTT_USERNAME = os.environ.get("MQTT_DEVICE_USERNAME", "rig_device")
 MQTT_PASSWORD = os.environ.get("MQTT_DEVICE_PASSWORD", "")
 DEVICE_ID = "esp32-rig-01"
 TOPIC_TELEMETRY = "rig/telemetry"
+# Must match firmware/src/config.h — bump both together on a wire-schema change.
+FW_VERSION = "1.1.0"
+SCHEMA_VERSION = 1
 
 LINE_RE = re.compile(
-    r"\[TELEMETRY\] Qin=([\d.]+) Qout=([\d.]+) Qbr=([\d.]+) L/min \| "
+    r"\[TELEMETRY\] seq=(\d+) Qin=([\d.]+) Qout=([\d.]+) Qbr=([\d.]+) L/min \| "
     r"pulses\(in/out/br\)=(\d+)/(\d+)/(\d+) \| "
     r"V=([\w.\-]+)V I=([\w.\-]+)mA P=([\w.\-]+)mW \| "
     r"water=([\w.\-]+)C \| "
@@ -46,11 +49,11 @@ def _num(s):
         return None  # "nan", "inf", etc.
 
 
-def parse_line(line: str, seq: int):
+def parse_line(line: str):
     m = LINE_RE.search(line)
     if not m:
         return None
-    (qin, qout, qbr, pin, pout, pbr, v, i, p, water,
+    (seq, qin, qout, qbr, pin, pout, pbr, v, i, p, water,
      vib_present, vib_rms, piezo_present, piezo_rms, piezo_centroid,
      pump1, pump2, servo) = m.groups()
 
@@ -59,8 +62,14 @@ def parse_line(line: str, seq: int):
 
     return {
         "ts": time.time(),
-        "seq": seq,
+        # The firmware's own counter, not one the bridge invents — a gap here
+        # means a line was lost between the ESP32 and this process, not just
+        # "nothing arrived for a while."
+        "seq": int(seq),
         "device": DEVICE_ID,
+        "fw_version": FW_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "transport": "usb_serial_bridge",
         "mode": "live",
         "clock_synced": False,
         "flow": {
@@ -109,7 +118,6 @@ def main():
     ser = serial.Serial(COM_PORT, BAUD, timeout=1)
     print(f"[bridge] reading {COM_PORT} @ {BAUD}")
 
-    seq = 0
     while True:
         raw = ser.readline()
         if not raw:
@@ -121,10 +129,9 @@ def main():
         if not line:
             continue
         print(line)
-        doc = parse_line(line, seq)
+        doc = parse_line(line)
         if doc is None:
             continue
-        seq += 1
         client.publish(TOPIC_TELEMETRY, json.dumps(doc), qos=0)
 
 
