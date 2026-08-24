@@ -606,12 +606,22 @@ def alerts_summary():
     return {"counts": svc.counts(), "zones": svc.zones(), "timeline": svc.timeline()}
 
 
+def _stop_dispositioned_mock_scenario(alert: dict):
+    """Return to a healthy baseline when the current mock incident is closed."""
+    if _mode != MODE_MOCK or alert.get("source") != MODE_MOCK or _mock_source is None:
+        return None
+    if alert.get("run_id") != _mock_source.run_id:
+        return None
+    return _switch_mode(MODE_MOCK, scenario_id="manual_control", speed=1.0, loop=True)
+
+
 @app.post("/api/alerts/{alert_id}/resolve", dependencies=[Depends(require_api_key)])
 def resolve_alert(alert_id: str, body: dict = None):
     alert = _alerts().resolve(alert_id, note=(body or {}).get("note", ""))
     if not alert:
         return {"success": False, "error": f"Unknown alert '{alert_id}'"}
-    return {"success": True, "alert": alert, "savings": _alerts().savings()}
+    source = _stop_dispositioned_mock_scenario(alert)
+    return {"success": True, "alert": alert, "savings": _alerts().savings(), "source": source}
 
 
 @app.post("/api/alerts/{alert_id}/false-positive", dependencies=[Depends(require_api_key)])
@@ -619,7 +629,8 @@ def false_positive_alert(alert_id: str, body: dict = None):
     alert = _alerts().mark_false_positive(alert_id, note=(body or {}).get("note", ""))
     if not alert:
         return {"success": False, "error": f"Unknown alert '{alert_id}'"}
-    return {"success": True, "alert": alert, "savings": _alerts().savings()}
+    source = _stop_dispositioned_mock_scenario(alert)
+    return {"success": True, "alert": alert, "savings": _alerts().savings(), "source": source}
 
 
 @app.post("/api/alerts/{alert_id}/reopen", dependencies=[Depends(require_api_key)])
