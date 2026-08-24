@@ -150,6 +150,8 @@ export default function App() {
     // Two modes only. Switching resets all detector state on the backend, so
     // a scenario never inherits the rig's learned baseline (or the reverse).
     const nextMode: OperatingMode = mode === "live" ? "mock" : "live";
+    setLatestTelemetry(null);
+    setTelemetryHistory([]);
     fetch("/api/mode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -171,6 +173,11 @@ export default function App() {
       .then((res) => res.json())
       .then(() => fetchState())
       .catch((err) => console.error(err));
+  };
+
+  const resetTelemetryView = () => {
+    setLatestTelemetry(null);
+    setTelemetryHistory([]);
   };
 
   return (
