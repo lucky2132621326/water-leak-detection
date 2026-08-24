@@ -33,6 +33,8 @@ class NestedTelemetryAdapter:
         flow = raw.get("flow") or {}
         power = raw.get("power") or {}
         missing = [key for key in ("q_in_lpm", "q_out_lpm") if key not in flow]
+        # Power keys remain part of the wire contract, but explicit null means
+        # the INA219 is unavailable. That is valid telemetry, not a zero reading.
         if "current_ma" not in power:
             missing.append("current_ma")
         if "bus_v" not in power and "voltage" not in power:

@@ -33,6 +33,7 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
     time: new Date(item.ts * 1000).toLocaleTimeString([], { hour12: false, minute: '2-digit', second: '2-digit' }),
     Qin: item.q_in,
     Qout: item.q_out,
+    Qbranch: item.q_branch,
     Residual: item.residual,
     CurrentMA: item.current_ma
   }));
@@ -48,7 +49,7 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
               <span>Phase 1: Telemetry Pipeline & Hardware Control Bench</span>
             </h2>
             <p className="text-xs text-slate-500 mt-1">
-              Direct telemetry ingestion, Hall-effect pulse conversion (1Hz MQTT), and solenoid valve actuation.
+              Three Hall-effect flow meters, MPU6050 vibration and ACS712 pump current, refreshed approximately every second in Live Sensors mode.
             </p>
           </div>
 
@@ -98,8 +99,8 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
 
         <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-xs">
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Pump Load Current (I_mA)</div>
-          <div className="text-3xl font-extrabold text-amber-600 mt-2">{latest?.current_ma ?? "0.0"} <span className="text-sm font-semibold text-slate-400">mA</span></div>
-          <div className="text-[11px] font-medium text-slate-400 mt-1">INA219 High-Side Sensor</div>
+          <div className="text-3xl font-extrabold text-amber-600 mt-2">{latest?.current_ma ?? "Unavailable"}{latest?.current_ma != null && <span className="text-sm font-semibold text-slate-400"> mA</span>}</div>
+          <div className="text-[11px] font-medium text-slate-400 mt-1">{latest?.current_ma != null ? "ACS712 analogue current sensor" : "ACS712 unavailable — check wiring and zero calibration"}</div>
         </div>
       </div>
 
@@ -109,7 +110,7 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
         <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-xs">
           <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center justify-between">
             <span>Flow Telemetry (Q_in vs Q_out)</span>
-            <span className="text-xs text-slate-400 font-mono font-medium">1Hz Stream</span>
+            <span className="text-xs text-slate-400 font-mono font-medium">~1-second Live stream</span>
           </h3>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -119,8 +120,9 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
                 <YAxis stroke="#94A3B8" domain={[0, 7]} tick={{ fontSize: 11 }} />
                 <Tooltip contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderRadius: '12px', color: '#0F172A', fontSize: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)' }} />
                 <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                <Line type="monotone" dataKey="Qin" name="Qin (Inlet)" stroke="#2563EB" strokeWidth={2.5} dot={false} />
-                <Line type="monotone" dataKey="Qout" name="Qout (Outlet)" stroke="#0891B2" strokeWidth={2.5} dot={false} />
+                <Line type="monotone" dataKey="Qin" name="Qin (Flow 1)" stroke="#2563EB" strokeWidth={2.5} dot={false} />
+                <Line type="monotone" dataKey="Qout" name="Qout (Flow 2)" stroke="#0891B2" strokeWidth={2.5} dot={false} />
+                <Line type="monotone" dataKey="Qbranch" name="Qbranch (Flow 3)" stroke="#7C3AED" strokeWidth={2.5} dot={false} />
                 <Line type="monotone" dataKey="Residual" name="Mass Differential ΔQ" stroke="#E11D48" strokeWidth={2.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -131,14 +133,14 @@ export const LiveMonitorView: React.FC<LiveMonitorViewProps> = ({
         <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-xs">
           <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center justify-between">
             <span>Pump Motor Load Current (I_mA)</span>
-            <span className="text-xs text-slate-400 font-mono font-medium">INA219 Telemetry</span>
+            <span className="text-xs text-slate-400 font-mono font-medium">ACS712 · ~1-second stream</span>
           </h3>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
                 <XAxis dataKey="time" stroke="#94A3B8" tick={{ fontSize: 11 }} />
-                <YAxis stroke="#94A3B8" domain={[350, 450]} tick={{ fontSize: 11 }} />
+                <YAxis stroke="#94A3B8" domain={[0, "auto"]} tick={{ fontSize: 11 }} />
                 <Tooltip contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderRadius: '12px', color: '#0F172A', fontSize: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)' }} />
                 <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
                 <Line type="monotone" dataKey="CurrentMA" name="Current (mA)" stroke="#D97706" strokeWidth={2.5} dot={false} />

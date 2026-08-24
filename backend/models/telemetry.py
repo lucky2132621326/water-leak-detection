@@ -17,9 +17,11 @@ Two fields are deliberately absent:
     worm-drive clamp, so ground truth is an operator-logged window in
     `leak_events`, not a per-sample flag.
 
-Two fields are nullable because their hardware is optional, and detection must
+Three fields are nullable because their hardware is optional, and detection must
 degrade rather than break when they are missing:
 
+  * **`power.bus_v/power_mw`** — ACS712 measures current only; voltage and
+    computed power stay absent while INA219 is not fitted.
   * **`temp.water_c`** — DS18B20 will not enumerate without its 4.7k pull-up.
   * **`vibration.piezo_*`** — the piezo disc is a secondary acoustic channel.
     The MPU6050 carries the acoustic detector on its own; the piezo only
@@ -46,14 +48,13 @@ class FlowData:
 
 @dataclass
 class PowerData:
-    #: Bus voltage at the INA219, high-side on P1's 12V line. Named `bus_v` to
-    #: match the sensor's own terminology and the wire format.
-    bus_v: float = 12.0
-    current_ma: float = 0.0
-    power_mw: float = 0.0
+    #: Bus voltage when INA219 is fitted. ACS712 does not provide this field.
+    bus_v: Optional[float] = None
+    current_ma: Optional[float] = None
+    power_mw: Optional[float] = None
 
     @property
-    def voltage(self) -> float:
+    def voltage(self) -> Optional[float]:
         """Backward-compatible name used by stored replay/report code."""
         return self.bus_v
 
@@ -183,9 +184,9 @@ class TelemetryDTO:
                 pulses_branch=int(flow_d.get("pulses_branch", 0)),
             ),
             power=PowerData(
-                bus_v=float(power_d.get("bus_v", power_d.get("voltage", 12.0))),
-                current_ma=float(power_d.get("current_ma", 0.0)),
-                power_mw=float(power_d.get("power_mw", 0.0)),
+                bus_v=_optional_float(power_d.get("bus_v", power_d.get("voltage"))),
+                current_ma=_optional_float(power_d.get("current_ma")),
+                power_mw=_optional_float(power_d.get("power_mw")),
             ),
             vibration=VibrationData(
                 # A rig with no MPU6050 omits the block, or sends nulls. Either

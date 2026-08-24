@@ -15,8 +15,25 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
 from backend.utils.logger import logger
+
+
+IST = timezone(timedelta(hours=5, minutes=30), "IST")
+# Matches the ingestion clock-integrity floor. Values below this are ESP32
+# uptime/test offsets, not Unix wall-clock timestamps, and would render as 1970.
+MIN_PLAUSIBLE_EVENT_TS = 1_700_000_000
+MAX_FUTURE_SKEW_SEC = 86_400
+DEFAULT_ALERT_ACTION = "Inspect the pipeline and verify in the field."
+INCIDENT_TEMPLATE_BODY = (
+    "🚨 LEAK DETECTED\n"
+    "Location: {{1}}\n"
+    "Estimated leak rate: {{2}} L/min\n"
+    "Confidence: {{3}} ({{4}}%)\n"
+    "Detected: {{5}}\n"
+    "Action: {{6}}"
+)
 
 
 def _as_bool(value: str | None, default: bool = False) -> bool:
@@ -30,7 +47,7 @@ class WhatsAppNotifier:
                  to_number: str = "", content_sid: str = "", enabled: bool = False,
                  notify_mock: bool = False, notify_replay: bool | None = None,
                  timeout_sec: float = 8.0,
-                 variable_1: str = "{zone}", variable_2: str = "{event_time}",
+                 action_text: str = DEFAULT_ALERT_ACTION,
                  transport=None, executor=None):
         self.account_sid = account_sid.strip()
         self.auth_token = auth_token.strip()
@@ -41,8 +58,7 @@ class WhatsAppNotifier:
         # ``notify_replay`` is a migration alias from the retired third mode.
         self.notify_mock = bool(notify_mock if notify_replay is None else notify_replay)
         self.timeout_sec = float(timeout_sec)
-        self.variable_1 = variable_1
-        self.variable_2 = variable_2
+        self.action_text = action_text.strip() or DEFAULT_ALERT_ACTION
         self._transport = transport or self._post
         self._executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="whatsapp")
         self._lock = threading.Lock()
@@ -75,8 +91,7 @@ class WhatsAppNotifier:
                 os.getenv("TWILIO_NOTIFY_MOCK", os.getenv("TWILIO_NOTIFY_REPLAY")), False
             ),
             timeout_sec=float(os.getenv("TWILIO_TIMEOUT_SEC", "8")),
-            variable_1=os.getenv("TWILIO_CONTENT_VARIABLE_1", "{zone}"),
-            variable_2=os.getenv("TWILIO_CONTENT_VARIABLE_2", "{event_time}"),
+            action_text=os.getenv("TWILIO_ALERT_ACTION", DEFAULT_ALERT_ACTION),
         )
         if enabled:
             missing = notifier.missing_configuration()
@@ -124,20 +139,7 @@ class WhatsAppNotifier:
 
     def send(self, alert: dict) -> str:
         """Synchronously deliver an alert; intended for the worker and tests."""
-        event_time = time.strftime(
-            "%Y-%m-%d %H:%M:%S %Z", time.localtime(float(alert.get("start_ts") or time.time()))
-        )
-        context = {
-            "alert_id": str(alert.get("alert_id") or "unknown alert"),
-            "zone": str(alert.get("zone") or "unknown zone"),
-            "event_time": event_time,
-            "likelihood": str(alert.get("likelihood_score") or "unknown"),
-            "leak_rate": str(alert.get("peak_leak_rate_lpm") or alert.get("leak_rate_lpm") or "unknown"),
-        }
-        variables = {
-            "1": self.variable_1.format_map(context),
-            "2": self.variable_2.format_map(context),
-        }
+        variables = self.template_variables(alert)
         form = {
             "From": self.from_number,
             "To": self.to_number,
@@ -149,6 +151,40 @@ class WhatsAppNotifier:
         if not sid:
             raise RuntimeError("Twilio response did not contain a message SID")
         return str(sid)
+
+    def template_variables(self, alert: dict) -> dict[str, str]:
+        """Map an incident to the approved six-variable WhatsApp template."""
+        now = time.time()
+        try:
+            event_ts = float(alert.get("start_ts"))
+        except (TypeError, ValueError):
+            event_ts = now
+        if event_ts < MIN_PLAUSIBLE_EVENT_TS or event_ts > now + MAX_FUTURE_SKEW_SEC:
+            logger.warning(
+                f"[WhatsApp] Replacing implausible incident timestamp {event_ts} "
+                "with current server time"
+            )
+            event_ts = now
+        event_time = datetime.fromtimestamp(event_ts, tz=IST).strftime("%Y-%m-%d %H:%M:%S IST")
+        rate = alert.get("peak_leak_rate_lpm")
+        if rate is None:
+            rate = alert.get("leak_rate_lpm")
+        likelihood = alert.get("likelihood_score")
+        return {
+            "1": str(alert.get("zone") or "Unknown"),
+            "2": f"{float(rate or 0.0):.3f}",
+            "3": str(alert.get("confidence_tier") or "UNAVAILABLE"),
+            "4": f"{float(likelihood or 0.0):.1f}",
+            "5": event_time,
+            "6": self.action_text,
+        }
+
+    def format_preview(self, alert: dict) -> str:
+        """Render the human-readable message for tests and operator previews."""
+        rendered = INCIDENT_TEMPLATE_BODY
+        for key, value in self.template_variables(alert).items():
+            rendered = rendered.replace("{{" + key + "}}", value)
+        return rendered
 
     def _post(self, form: dict) -> dict:
         url = f"https://api.twilio.com/2010-04-01/Accounts/{urllib.parse.quote(self.account_sid)}/Messages.json"

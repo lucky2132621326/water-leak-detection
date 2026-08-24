@@ -19,7 +19,7 @@ interface LeakControlState {
 }
 
 /**
- * Interactive injection belongs to Mock Data Mode. The physical rig uses
+ * Interactive injection belongs to Test Bench. The physical rig uses
  * manual clamp openings, so Live Sensor Mode shows the experiment procedure
  * instead of exposing a fictional electronic leak-valve control.
  */
@@ -237,7 +237,7 @@ export const LeakBenchControls: React.FC<{ mode: OperatingMode; onChanged?: () =
             <span>
               {mode === "live"
                 ? "Live Sensor Mode — commands are published to rig/cmd and require a reachable broker and a powered rig."
-                : "Mock Data Mode — the change appears in the very next generated sample; detection latency you observe is the detector's, not the harness's."}
+                : "Test Bench — the change appears in the very next generated sample; detection latency you observe is the detector's, not the harness's."}
             </span>
           </p>
         </>

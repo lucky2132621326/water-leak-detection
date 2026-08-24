@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Sidebar, NavTab } from "./components/Sidebar";
 import { Header } from "./components/Header";
 import { DashboardView } from "./components/DashboardView";
@@ -16,6 +16,7 @@ import { SettingsView } from "./components/SettingsView";
 import { ImpactSimulatorView } from "./components/ImpactSimulatorView";
 import { LeakHistoryView } from "./components/LeakHistoryView";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
+import { LeakAlertToast } from "./components/LeakAlertToast";
 import type { AlertsSummary, SavingsSummary, LeakAlert, OperatingMode, RuntimeCapabilities } from "./types";
 import type { SystemStatus } from "./components/SystemStatusRow";
 
@@ -30,6 +31,10 @@ export default function App() {
   const [alertsSummary, setAlertsSummary] = useState<AlertsSummary | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [recentAlerts, setRecentAlerts] = useState<LeakAlert[]>([]);
+  const [alertToast, setAlertToast] = useState<LeakAlert | null>(null);
+  const alertFeedInitialized = useRef(false);
+  const seenAlertKeys = useRef<Set<string>>(new Set());
+  const telemetryPollInFlight = useRef(false);
   const [scenarioName, setScenarioName] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<RuntimeCapabilities | null>(null);
 
@@ -38,7 +43,9 @@ export default function App() {
     window.localStorage.setItem("water-leak-theme", darkMode ? "dark" : "light");
   }, [darkMode]);
 
-  // Fetch Health & Live Telemetry State
+  // Health is cheap and changes rarely; still polled. Telemetry itself comes
+  // over the WebSocket below instead — see fetchState's docstring-equivalent
+  // comment on the effect that opens it.
   const fetchState = () => {
     fetch("/api/health")
       .then((res) => res.json())
@@ -47,12 +54,6 @@ export default function App() {
         if (data?.mode === "live" || data?.mode === "mock") setMode(data.mode);
       })
       .catch((err) => console.error(err));
-
-    fetch("/api/telemetry")
-      .then((res) => res.json())
-      .then((data) => setLatestTelemetry(data))
-      .catch((err) => console.error(err));
-
   };
 
   const fetchHistory = () => {
@@ -64,6 +65,24 @@ export default function App() {
         }
       })
       .catch((err) => console.error(err));
+  };
+
+  const fetchTelemetry = () => {
+    // Never stack requests if the backend is momentarily slow. The next
+    // one-second tick retries while the last good sample remains visible.
+    if (telemetryPollInFlight.current) return;
+    telemetryPollInFlight.current = true;
+    fetch("/api/telemetry", { cache: "no-store" })
+      .then((res) => {
+        if (!res.ok) throw new Error(`telemetry request failed: ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        setLatestTelemetry(data);
+        if (data?.mode === "live" || data?.mode === "mock") setMode(data.mode);
+      })
+      .catch((err) => console.error(err))
+      .finally(() => { telemetryPollInFlight.current = false; });
   };
 
   // Savings and the alert badge change on operator action, not per sample, so
@@ -88,7 +107,24 @@ export default function App() {
 
     fetch("/api/alerts?limit=5")
       .then((res) => res.json())
-      .then((data) => setRecentAlerts(Array.isArray(data) ? data : []))
+      .then((data) => {
+        const alerts = Array.isArray(data) ? data as LeakAlert[] : [];
+        setRecentAlerts(alerts);
+
+        const keyOf = (alert: LeakAlert) =>
+          `${alert.source}:${alert.alert_id}:${alert.start_ts}`;
+        if (alertFeedInitialized.current) {
+          const recentCutoff = Date.now() / 1000 - 15;
+          const newlyCreated = alerts.find((alert) =>
+            !seenAlertKeys.current.has(keyOf(alert)) &&
+            Number(alert.created_at ?? 0) >= recentCutoff
+          );
+          if (newlyCreated) setAlertToast(newlyCreated);
+        } else {
+          alertFeedInitialized.current = true;
+        }
+        alerts.forEach((alert) => seenAlertKeys.current.add(keyOf(alert)));
+      })
       .catch(() => undefined);
 
     fetch("/api/mode")
@@ -104,13 +140,61 @@ export default function App() {
       .catch(() => setCapabilities({ audience: "operator", read_only: false, mutations_allowed: true }));
     fetchState();
     fetchHistory();
-    const interval = setInterval(fetchState, 1000); // 1Hz live telemetry polling
+    // Health/connection-status widgets change far less often than telemetry
+    // itself (which now arrives over the WebSocket below), so this poll can
+    // stay slow without the dashboard feeling stale.
+    const interval = setInterval(fetchState, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [mode]);
 
   useEffect(() => {
     const interval = setInterval(fetchHistory, 5000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Guaranteed one-second polling path. WebSocket push remains as a low-latency
+  // enhancement, while this job makes updates reliable through proxies or
+  // browsers where the socket is unavailable.
+  useEffect(() => {
+    fetchTelemetry();
+    const interval = window.setInterval(fetchTelemetry, 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  // WebSocket push complements the required polling job: the backend pushes a
+  // new payload the instant a sample actually changes (see /ws/telemetry),
+  // so values update the moment water starts moving through the pipe rather
+  // than waiting for the next fixed-interval fetch. Reconnects on drop with a
+  // short fixed backoff — this is a dashboard, not a control channel, so a
+  // simple retry is enough rather than exponential backoff/jitter.
+  useEffect(() => {
+    let socket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+
+    const connect = () => {
+      if (stopped) return;
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      socket = new WebSocket(`${protocol}//${window.location.host}/ws/telemetry`);
+      socket.onmessage = (event) => {
+        try {
+          setLatestTelemetry(JSON.parse(event.data));
+        } catch {
+          // Malformed frame — drop it rather than crash the socket handler.
+        }
+      };
+      socket.onclose = () => {
+        if (!stopped) reconnectTimer = setTimeout(connect, 2000);
+      };
+      socket.onerror = () => socket?.close();
+    };
+    connect();
+
+    return () => {
+      stopped = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      socket?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -118,6 +202,12 @@ export default function App() {
     const interval = setInterval(fetchImpactState, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!alertToast) return;
+    const timeout = window.setTimeout(() => setAlertToast(null), 15000);
+    return () => window.clearTimeout(timeout);
+  }, [alertToast]);
 
     // Which mock scenario is streaming — shown on the Dashboard instead of a
     // stale stored run id.
@@ -197,6 +287,17 @@ export default function App() {
           onToggleMode={handleToggleMode}
           readOnly={readOnly}
         />
+
+        {alertToast && (
+          <LeakAlertToast
+            alert={alertToast}
+            onDismiss={() => setAlertToast(null)}
+            onOpen={() => {
+              setAlertToast(null);
+              setActiveTab("alerts");
+            }}
+          />
+        )}
 
         {/* View Content Body */}
         <main className="flex-1 p-8 max-w-[1600px] w-full mx-auto">

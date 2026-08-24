@@ -32,7 +32,7 @@ public:
                           float busV, float currentMA, float powerMW,
                           const VibrationSample& vib,
                           float waterC, bool tempPresent,
-                          bool pump1, bool pump2, int servoDeg,
+                          bool pump1, bool pump2, int servoDeg, bool acs712Present,
                           uint32_t uptimeSec);
 
     void publishStatus(const char* state);

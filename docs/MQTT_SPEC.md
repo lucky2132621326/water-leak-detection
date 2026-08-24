@@ -16,7 +16,7 @@ Credentials belong in the git-ignored `firmware/src/secrets.h` and root `.env`.
 
 ## `rig/telemetry`
 
-Published once per second by `esp32-rig-01` using the nested schema below.
+Published approximately once per second by `esp32-rig-01` using the nested schema below.
 Telemetry is sent at QoS 0 by PubSubClient; each sample carries raw cumulative
 pulse counts so gaps and recalibration can be handled downstream.
 
@@ -35,9 +35,10 @@ pulse counts so gaps and recalibration can be handled downstream.
     "pulses_branch": 158
   },
   "power": {
-    "bus_v": 11.94,
+    "bus_v": null,
     "current_ma": 842.3,
-    "power_mw": 10056.0
+    "power_mw": null,
+    "current_source": "acs712"
   },
   "vibration": {
     "rms": 0.031,
@@ -56,13 +57,25 @@ pulse counts so gaps and recalibration can be handled downstream.
   "health": {
     "uptime_s": 4471,
     "wifi_rssi": -58,
-    "free_heap": 184320
+    "free_heap": 184320,
+    "sensors": {
+      "flow_1": true,
+      "flow_2": true,
+      "flow_3": true,
+      "mpu6050": true,
+      "ina219": false,
+      "acs712": true
+    }
   }
 }
 ```
 
-Unavailable acoustic or temperature sensors publish JSON `null`, never a fake
-zero. An unsynchronised ESP32 publishes `ts: 0` and `clock_synced: false`; the
+Unavailable power, acoustic, or temperature sensors publish JSON `null`, never
+a fake zero. In the current bring-up profile the INA219 is absent and ACS712
+supplies real pump current only; `bus_v` and `power_mw` therefore remain null.
+Current-signature detection stays active at nominal-voltage compensation and
+marks that fact explicitly. An
+unsynchronised ESP32 publishes `ts: 0` and `clock_synced: false`; the
 backend substitutes server receive time and exposes a substitution counter.
 
 Raw pulse counts are mandatory in the current nested firmware contract so

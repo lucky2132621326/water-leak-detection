@@ -117,7 +117,11 @@ class MockTelemetrySource(TelemetrySource):
             if response is None:
                 continue  # rejected payload — counts as neither
             detected = bool(response["is_alarm"])
-            truth = bool(payload["solenoid_state"])
+            # Ground truth belongs to the declarative scenario, not the sensor
+            # packet. The rig has no leak solenoid and the telemetry contract
+            # intentionally removed `solenoid_state`; reading that retired
+            # field here made every dashboard batch score fail with HTTP 500.
+            truth = self.scenario.is_leaking_at(float(offset))
             if detected and truth:
                 tp += 1
                 if first_detection_offset is None:

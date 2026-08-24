@@ -90,20 +90,24 @@ export const ScenarioLabView: React.FC<{ onModeChange?: () => void }> = ({ onMod
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scenario_id: scenarioId }),
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error ?? data.message ?? `Scoring failed (${r.status}).`);
+        return data;
+      })
       .then((d: ScenarioRunResult) => {
         if (d.success) setResults((prev) => ({ ...prev, [scenarioId]: d }));
         else setError((d as any).error ?? "Scenario run failed.");
         return d;
       })
-      .catch(() => setError("Scenario run failed."))
+      .catch((err) => setError(err instanceof Error ? err.message : "Scenario run failed."))
       .finally(() => setBusy(null));
   };
 
   const scoreAll = async () => {
     setRunningAll(true);
     setError(null);
-    for (const s of scenarios) {
+    for (const s of scenarios.filter((scenario) => scenario.scoreable !== false)) {
       // Sequential on purpose — each run replays a full scenario through the
       // pipeline, and running them concurrently would contend for the DB.
       // eslint-disable-next-line no-await-in-loop
@@ -243,14 +247,20 @@ export const ScenarioLabView: React.FC<{ onModeChange?: () => void }> = ({ onMod
                   <Radio className="w-3.5 h-3.5" />
                   <span>Stream to Dashboard</span>
                 </button>
-                <button
-                  onClick={() => score(s.id)}
-                  disabled={busy === s.id || runningAll}
-                  className="px-3 py-2 bg-white border border-slate-200 hover:border-blue-300 hover:text-blue-600 text-slate-700 disabled:opacity-50 text-xs font-bold rounded-xl flex items-center space-x-1.5 transition"
-                >
-                  {busy === s.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                  <span>Score</span>
-                </button>
+                {s.scoreable ? (
+                  <button
+                    onClick={() => score(s.id)}
+                    disabled={busy === s.id || runningAll}
+                    className="px-3 py-2 bg-white border border-slate-200 hover:border-blue-300 hover:text-blue-600 text-slate-700 disabled:opacity-50 text-xs font-bold rounded-xl flex items-center space-x-1.5 transition"
+                  >
+                    {busy === s.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                    <span>Score</span>
+                  </button>
+                ) : (
+                  <span className="px-3 py-2 text-[11px] font-semibold text-slate-400">
+                    Interactive only
+                  </span>
+                )}
               </div>
             </div>
           );

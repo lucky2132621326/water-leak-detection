@@ -174,7 +174,7 @@ export const ExperimentsView: React.FC = () => {
               </button>
               <p className="text-[11px] text-slate-400 leading-relaxed">
                 Starting a run tags incoming live telemetry with its ID so the session can be scored later.
-                In Mock Data Mode the generated stream is tagged with the run, so both ground truth and telemetry are recorded.
+                On Test Bench the generated stream is tagged with the run, so both ground truth and telemetry are recorded.
               </p>
             </div>
           )}

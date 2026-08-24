@@ -179,6 +179,9 @@ class ScenarioSpec:
     def summary(self) -> dict:
         return {
             "id": self.id, "name": self.name, "description": self.description,
+            # Manual Control is an indefinite operator sandbox, not a
+            # reproducible benchmark with scripted ground truth.
+            "scoreable": self.id != "manual_control",
             "duration_sec": self.duration_sec,
             "leak_count": len(self.leaks),
             "fault_count": len(self.faults),

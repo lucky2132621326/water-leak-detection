@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import fs from "fs";
+import net from "net";
 import { createServer as createViteServer } from "vite";
 
 const FASTAPI_BASE_URL = process.env.FASTAPI_BASE_URL || "http://localhost:8001";
@@ -10,6 +11,9 @@ const DASHBOARD_AUDIENCE = process.env.DASHBOARD_AUDIENCE === "judge" ? "judge" 
 const IS_JUDGE_VIEW = DASHBOARD_AUDIENCE === "judge";
 const WORKSPACE_ROOT = path.resolve(process.cwd());
 const SENSITIVE_FILENAMES = new Set([".env", "secrets.h"]);
+const DEFAULT_FASTAPI_TIMEOUT_MS = 4_000;
+const LONG_RUNNING_FASTAPI_TIMEOUT_MS = 300_000;
+const LONG_RUNNING_API_PATHS = new Set(["/api/scenarios/run", "/api/benchmark/evaluate"]);
 
 function resolveInsideWorkspace(relativePath: string) {
   const resolved = path.resolve(WORKSPACE_ROOT, relativePath);
@@ -80,10 +84,13 @@ async function startServer() {
     try {
       const query = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
       const url = `${FASTAPI_BASE_URL}${fastApiPath}${query}`;
+      const timeoutMs = LONG_RUNNING_API_PATHS.has(fastApiPath)
+        ? LONG_RUNNING_FASTAPI_TIMEOUT_MS
+        : DEFAULT_FASTAPI_TIMEOUT_MS;
       const init: RequestInit = {
         method: req.method,
         headers: { "Content-Type": "application/json", "X-API-Key": FASTAPI_API_KEY },
-        signal: AbortSignal.timeout(4000),
+        signal: AbortSignal.timeout(timeoutMs),
       };
       if (req.method !== "GET" && req.method !== "HEAD") {
         init.body = JSON.stringify(req.body ?? {});
@@ -102,10 +109,13 @@ async function startServer() {
       const data = await upstream.json();
       res.status(upstream.status).json(data);
     } catch (_e) {
+      const isLongRunning = LONG_RUNNING_API_PATHS.has(fastApiPath);
       res.status(502).json({
         status: "error",
         code: "DETECTION_BACKEND_UNAVAILABLE",
-        message: "The detection service did not respond within four seconds.",
+        message: isLongRunning
+          ? "The scoring operation did not complete within five minutes."
+          : "The detection service did not respond within four seconds.",
       });
     }
   }
@@ -271,8 +281,33 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, HOST, () => {
+  const httpServer = app.listen(PORT, HOST, () => {
     console.log(`[Water Leak Detection Platform] ${DASHBOARD_AUDIENCE} server running at http://${HOST}:${PORT}`);
+  });
+
+  // Raw TCP passthrough for the FastAPI WebSocket — the handshake and every
+  // frame after it are just bytes, so proxying at the socket level needs no
+  // WebSocket-aware library. Only the one path is forwarded; anything else
+  // requesting an upgrade is rejected rather than silently misrouted.
+  const FASTAPI_HOST = new URL(FASTAPI_BASE_URL).hostname;
+  const FASTAPI_PORT = Number(new URL(FASTAPI_BASE_URL).port || 80);
+  httpServer.on("upgrade", (req, clientSocket, head) => {
+    if (req.url !== "/ws/telemetry") {
+      clientSocket.destroy();
+      return;
+    }
+    const upstream = net.connect(FASTAPI_PORT, FASTAPI_HOST, () => {
+      const headerLines = [`${req.method} ${req.url} HTTP/1.1`];
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        headerLines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+      }
+      upstream.write(headerLines.join("\r\n") + "\r\n\r\n");
+      if (head && head.length) upstream.write(head);
+      clientSocket.pipe(upstream);
+      upstream.pipe(clientSocket);
+    });
+    upstream.on("error", () => clientSocket.destroy());
+    clientSocket.on("error", () => upstream.destroy());
   });
 }
 

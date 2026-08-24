@@ -9,6 +9,12 @@ from backend.models.telemetry import TelemetryDTO
 from backend.utils.logger import logger
 
 MAX_BUS_VOLTAGE = 24.0
+# YF-S201 is rated to ~30 L/min; anything above this is not a real reading —
+# it is electrical noise (typically pump/relay switching transients) injecting
+# phantom pulses into the flow ISR. Generous headroom over the datasheet max so
+# a genuinely fast legitimate flow is never rejected, while still catching the
+# 100+ L/min bursts noise produces.
+MAX_FLOW_LPM = 40.0
 
 
 class TelemetryValidator:
@@ -22,7 +28,25 @@ class TelemetryValidator:
                 logger.warning(f"Rejected telemetry seq={dto.seq}: negative flow rate detected")
                 return None, "Negative flow rate value detected"
 
-            if dto.power.bus_v < 0.0 or dto.power.bus_v > MAX_BUS_VOLTAGE:
+            # Clamp rather than reject: a noise-corrupted flow line most often
+            # coincides with a pump-switching event, which is exactly when the
+            # operator wants to see current/vibration/pump-state keep updating.
+            # Dropping the whole sample would blank the dashboard at the one
+            # moment it matters; zeroing just the implausible field(s) keeps
+            # everything else live while refusing to treat noise as a leak.
+            for name in ("q_in_lpm", "q_out_lpm", "q_branch_lpm"):
+                value = getattr(dto.flow, name)
+                if value > MAX_FLOW_LPM:
+                    logger.warning(
+                        f"Clamped telemetry seq={dto.seq}: {name}={value} exceeds sensor's "
+                        f"physical maximum ({MAX_FLOW_LPM} L/min) — likely switching noise, "
+                        "zeroed rather than trusted"
+                    )
+                    setattr(dto.flow, name, 0.0)
+
+            if dto.power.bus_v is not None and (
+                dto.power.bus_v < 0.0 or dto.power.bus_v > MAX_BUS_VOLTAGE
+            ):
                 logger.warning(
                     f"Rejected telemetry seq={dto.seq}: bus voltage out of range "
                     f"({dto.power.bus_v}V)"

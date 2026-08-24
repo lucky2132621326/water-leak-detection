@@ -11,8 +11,9 @@ not exist on this rig:
   * `solenoid_state`  — no solenoid; leaks are opened by hand and ground truth
                         lives in `leak_events` as an operator-logged window
 
-Two fields are nullable because their hardware is optional, and detection must
-degrade rather than break: `temp.water_c` and the `vibration.piezo_*` pair.
+Power, temperature and acoustic fields are nullable because their hardware is
+optional. Missing hardware must deactivate its detector, never become fake zero
+evidence.
 """
 import os
 import sys
@@ -23,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.ingestion.ingestor import TelemetryIngestor, flatten_sample
 from backend.models.telemetry import TelemetryDTO
+from backend.pipeline import DetectionPipeline
 from backend.validators.telemetry_validator import TelemetryValidator
 
 
@@ -86,6 +88,47 @@ class TestSchemaShape(unittest.TestCase):
 
 
 class TestOptionalHardware(unittest.TestCase):
+    def test_ina219_nulls_are_absence_not_zero(self):
+        payload = rig_payload()
+        payload["power"] = {"bus_v": None, "current_ma": None, "power_mw": None}
+        dto, message = TelemetryValidator.normalize(payload)
+        self.assertEqual(message, "VALID")
+        self.assertIsNotNone(dto)
+        self.assertIsNone(dto.power.bus_v)
+        self.assertIsNone(dto.power.current_ma)
+
+    def test_missing_ina219_deactivates_current_detector(self):
+        payload = rig_payload()
+        payload["power"] = {"bus_v": None, "current_ma": None, "power_mw": None}
+        dto = TelemetryDTO.from_dict(payload)
+        result = DetectionPipeline(mode="live").process_sample(dto)
+        current = next(
+            item for item in result["detectors"]
+            if item["method"] == "current_signature"
+        )
+        self.assertFalse(current["active"])
+        self.assertFalse(current["is_alarm"])
+        self.assertIsNone(current["actual_current_ma"])
+
+    def test_acs712_current_remains_active_without_bus_voltage(self):
+        payload = rig_payload()
+        payload["power"] = {
+            "bus_v": None,
+            "current_ma": 386.5,
+            "power_mw": None,
+            "current_source": "acs712",
+        }
+        dto, message = TelemetryValidator.normalize(payload)
+        self.assertEqual(message, "VALID")
+        result = DetectionPipeline(mode="live").process_sample(dto)
+        current = next(
+            item for item in result["detectors"]
+            if item["method"] == "current_signature"
+        )
+        self.assertTrue(current["active"])
+        self.assertFalse(current["voltage_compensated"])
+        self.assertEqual(current["actual_current_ma"], 386.5)
+
     def test_piezo_absent_is_none_not_zero(self):
         # 0.0 is a reading from a silent microphone; None is no microphone.
         # Collapsing the two would make missing hardware look like evidence.

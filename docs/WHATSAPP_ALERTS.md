@@ -16,8 +16,20 @@ reads credentials from environment variables and `.env` is ignored by Git.
 1. Copy `.env.example` to `.env`.
 2. Configure the Twilio WhatsApp Sandbox or an approved WhatsApp sender.
    Sandbox recipients must join the sandbox before Twilio can message them.
-3. Create/approve a Content Template whose variable `{{1}}` is the suspected
-   zone and `{{2}}` is the event timestamp. Copy its `HX...` SID.
+3. Create and approve a `twilio/text` Content Template with this exact body:
+
+```text
+🚨 LEAK DETECTED
+Location: {{1}}
+Estimated leak rate: {{2}} L/min
+Confidence: {{3}} ({{4}}%)
+Detected: {{5}}
+Action: {{6}}
+```
+
+The variables are zone, leak rate, confidence tier, likelihood percentage,
+event time in IST, and operator action respectively. Copy the approved `HX...`
+SID into `.env`.
 4. Put the rotated account SID/token, sender, recipient, and Content SID in `.env`.
 5. Set `TWILIO_WHATSAPP_ENABLED=true` and restart the Python API.
 
@@ -28,8 +40,7 @@ TWILIO_AUTH_TOKEN="replace-with-rotated-token"
 TWILIO_WHATSAPP_FROM="whatsapp:+14155238886"
 TWILIO_WHATSAPP_TO="whatsapp:+91XXXXXXXXXX"
 TWILIO_CONTENT_SID="HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-TWILIO_CONTENT_VARIABLE_1="{zone}"
-TWILIO_CONTENT_VARIABLE_2="{event_time}"
+TWILIO_ALERT_ACTION="Inspect the pipeline and verify in the field."
 TWILIO_NOTIFY_MOCK="false"
 ```
 
@@ -38,14 +49,10 @@ Set `TWILIO_NOTIFY_MOCK=true` only for a deliberate notification demo.
 Deduplication is process-local; a durable outbox is the next step if guaranteed
 delivery across restarts is required.
 
-Template variables support `{alert_id}`, `{zone}`, `{event_time}`, `{likelihood}`,
-and `{leak_rate}`. To reproduce Twilio's literal quick-start payload, configure
-variable 1 as `12/1` and variable 2 as `3pm`; dynamic leak values are more useful
-for real alerts.
-
 The Twilio form contains `From`, `To`, `ContentSid`, and `ContentVariables` as
-`{"1":"<zone>","2":"<event time>"}`. Tests mock the transport and never
-contact Twilio:
+six values matching the contract above. Tests mock the transport and never
+contact Twilio. WhatsApp must approve the template before business-initiated
+messages can use it.
 
 ```bash
 python -m pytest tests/test_whatsapp_notifier.py

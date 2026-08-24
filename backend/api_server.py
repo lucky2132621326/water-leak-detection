@@ -8,19 +8,21 @@ it is evaluated. See docs/OPERATING_MODES.md.
 
 Run with: uvicorn backend.api_server:app --host 0.0.0.0 --port 8000
 """
+import asyncio
 import json
 import os
 import threading
 import time
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from backend.ingestion import TelemetryIngestor, flatten_sample
 from backend.mode import MODE_LIVE, MODE_MOCK, set_active_mode
+from backend.ingestion.flow_state import derive_water_flow_state
 from backend.ingestion.mqtt_source import MqttTelemetrySource
 from backend.mock.mock_source import MockTelemetrySource
 from backend.mock.scenarios import get_scenario, list_scenarios, scenario_from_dict
@@ -228,10 +230,30 @@ def run_scenario(body: dict):
             return {"success": False, "error": f"Invalid scenario definition: {e}"}
     if scenario is None:
         return {"success": False, "error": f"Unknown scenario '{scenario_id}'"}
+    if scenario.id == "manual_control":
+        return {
+            "success": False,
+            "error": "Manual Control is interactive and has no scripted ground truth to score.",
+        }
 
     persist = bool(body.get("persist", True))
     run_id = body.get("run_id") or f"MOCK_{scenario.id}"
-    scratch = TelemetryIngestor(source_name=MODE_MOCK, persist=persist)
+    class _BatchAlertSink:
+        """Batch benchmarks record telemetry/detections but never page operators.
+
+        Interactive mock streaming still uses the normal AlertService and can
+        send WhatsApp when explicitly enabled. Scoring fourteen scenarios is a
+        regression operation, not fourteen new operational incidents.
+        """
+        @staticmethod
+        def ingest(*_args, **_kwargs):
+            return None
+
+    scratch = TelemetryIngestor(
+        source_name=MODE_MOCK,
+        persist=persist,
+        alert_service=_BatchAlertSink(),
+    )
     source = MockTelemetrySource(scenario, run_id=run_id, persist_ground_truth=persist)
     result = source.run_batch(scratch)
     result["success"] = True
@@ -240,26 +262,62 @@ def run_scenario(body: dict):
     return result
 
 
-@app.get("/api/telemetry")
-def get_telemetry():
+def _build_telemetry_payload():
+    """Shared by the polling GET endpoint and the /ws/telemetry push socket —
+    one code path so a client can never see the two disagree."""
     snap = _ingestor.snapshot()
     flat = snap["latest"]
     response = snap["evaluation"]
+    water_flow = derive_water_flow_state(
+        flat,
+        snap["latest_received_at"],
+        history=_ingestor.recent_history(),
+    )
 
     # The residual IS the estimated leak rate — water entering the zone that
     # never left it. Attaching its impact summary here means every view reading
-    # /api/telemetry shows the same severity/loss figures as the Alert Center.
+    # telemetry shows the same severity/loss figures as the Alert Center.
     leak_rate = _alerts().leak_rate_from(response) if (response and response.get("is_alarm")) else 0.0
 
     return {
         "mode": _mode,
         "latest": flat,
+        "water_flow": water_flow,
+        "latest_received_at": snap["latest_received_at"],
         "pump_on": flat["pump_on"] if flat else True,
         "leak_active": flat["leak_active"] if flat else False,
         "evaluation": response,
         "leak_rate_lpm": round(leak_rate, 3),
         "impact": _impact_service().summarize(leak_rate),
+        "sample_count": snap["sample_count"],
+        "rejected_count": snap["rejected_count"],
     }
+
+
+@app.get("/api/telemetry")
+def get_telemetry():
+    return _build_telemetry_payload()
+
+
+@app.websocket("/ws/telemetry")
+async def ws_telemetry(websocket: WebSocket):
+    """Pushes a new payload the moment a sample actually changes, instead of
+    making every client poll on a fixed timer. `_ingestor` is re-read from the
+    module global on each loop pass (not captured once) so a live/mock mode
+    switch mid-connection is picked up without the client having to reconnect.
+    """
+    await websocket.accept()
+    last_seen_at = None
+    try:
+        while True:
+            snap = _ingestor.snapshot()
+            seen_at = snap["latest_received_at"]
+            if seen_at != last_seen_at:
+                last_seen_at = seen_at
+                await websocket.send_json(_build_telemetry_payload())
+            await asyncio.sleep(0.15)
+    except WebSocketDisconnect:
+        pass
 
 
 @app.get("/api/telemetry/history")
@@ -333,7 +391,7 @@ def leak_toggle(body: dict):
             ok, msg = _publish_command({"pump1": bool(body["pump_state"])})
             return {"success": ok, "message": msg}
         return {"success": False,
-                "error": "Pump control is not modelled in Mock Data Mode — the generator "
+                "error": "Pump control is not modelled on Test Bench — the generator "
                          "assumes the pump runs continuously."}
 
     # --- air bubbles --------------------------------------------------------
@@ -384,8 +442,8 @@ def mock_control_state():
     """Current mock leak state, for the bench controls to reflect."""
     if _mock_source is None:
         return {"available": False,
-                "reason": "Mock Data Mode is not running." if _mode != MODE_MOCK
-                          else "No mock stream is active.",
+                "reason": "Test Bench is not running." if _mode != MODE_MOCK
+                          else "No test bench stream is active.",
                 "mode": _mode}
     return {"available": True, "mode": _mode,
             "scenario": _mock_source.scenario.summary(),
@@ -800,7 +858,7 @@ def system_status():
         # timestamp must not make a connected rig look offline (or vice versa).
         rig_last_seen = _ingestor.latest_received_at
         try:
-            rig_online = (time.time() - float(rig_last_seen)) < 10
+            rig_online = (time.time() - float(rig_last_seen)) < 20
         except (TypeError, ValueError):
             rig_online = False
         device_state = str((_ingestor.latest_device_status or {}).get("status", "")).upper()
@@ -814,7 +872,7 @@ def system_status():
             "online": rig_online,
             "last_seen_ts": rig_last_seen,
             "detail": "receiving telemetry" if rig_online else (
-                "no telemetry received" if _mode == MODE_LIVE else "not applicable in Mock Data Mode"),
+                "no telemetry received" if _mode == MODE_LIVE else "not applicable on Test Bench"),
         },
         "mqtt": {
             "connected": mqtt_ok,

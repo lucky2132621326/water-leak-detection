@@ -26,8 +26,12 @@ class DetectionStateMachine:
         if self.state == DetectionState.NORMAL:
             if raw_alarm:
                 self.suspect_count = 1
-                self.state = DetectionState.SUSPECTED
-                logger.info("[StateMachine] Alarm candidate triggered -> Transition to SUSPECTED")
+                if self.persistence_samples <= 1:
+                    self.state = DetectionState.CONFIRMED
+                    logger.warning("[StateMachine] Alarm persisted for configured sample window -> Transition to CONFIRMED LEAK")
+                else:
+                    self.state = DetectionState.SUSPECTED
+                    logger.info("[StateMachine] Alarm candidate triggered -> Transition to SUSPECTED")
 
         elif self.state == DetectionState.SUSPECTED:
             if raw_alarm:
@@ -43,8 +47,13 @@ class DetectionStateMachine:
         elif self.state == DetectionState.CONFIRMED:
             if not raw_alarm:
                 self.recovery_count = 1
-                self.state = DetectionState.RECOVERING
-                logger.info("[StateMachine] Leak anomaly dropped -> Transition to RECOVERING")
+                if self.recovery_samples <= 1:
+                    self.state = DetectionState.NORMAL
+                    self.suspect_count = 0
+                    logger.info("[StateMachine] Recovery confirmed -> Return to NORMAL")
+                else:
+                    self.state = DetectionState.RECOVERING
+                    logger.info("[StateMachine] Leak anomaly dropped -> Transition to RECOVERING")
             else:
                 self.recovery_count = 0
 

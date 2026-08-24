@@ -244,10 +244,14 @@ class TelemetryIngestor:
         leak_active = self._leak_window_open(dto.ts, effective_run_id)
 
         with self._lock:
+            received_at = time.time()
             self.latest_response = response
             self.latest_telemetry = dto.to_dict()
             self.latest_flat = flatten_sample(dto, response, leak_active=leak_active)
-            self.latest_received_at = time.time()
+            # Receipt time is separate from device time and drives UI freshness
+            # plus the 10-second last-nonzero display hold.
+            self.latest_flat["received_at"] = received_at
+            self.latest_received_at = received_at
             self.history.append(self.latest_flat)
             if len(self.history) > HISTORY_LIMIT:
                 self.history.pop(0)

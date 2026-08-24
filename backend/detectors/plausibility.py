@@ -104,7 +104,7 @@ class PlausibilityGuard:
     # --- channel tests ----------------------------------------------------
     def _current_verdict(self, residual, result):
         """Does the pump current corroborate, contradict, or abstain?"""
-        if result is None or self.current_ma_per_leak_lpm <= 0:
+        if result is None or not result.get("active", True) or self.current_ma_per_leak_lpm <= 0:
             return None
         if result.get("is_alarm"):
             return {"channel": "current_signature", "verdict": "corroborates"}

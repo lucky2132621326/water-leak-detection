@@ -4,6 +4,9 @@ The single code path every sample runs through, in both operating modes — same
 detectors, same fusion, same plausibility guard, same localization, same response
 shaping. Switching modes changes where data comes from, never how it is judged.
 """
+import math
+
+from backend.config.config_loader import thresholds_loader
 from backend.detectors.detection_state_machine import DetectionStateMachine
 from backend.detectors.detector_manager import DetectorManager
 from backend.detectors.plausibility import PlausibilityGuard
@@ -24,7 +27,13 @@ class DetectionPipeline:
         self.detector_manager = DetectorManager(mode=self.mode)
         self.fusion_engine = FusionEngine()
         self.localization_service = LocalizationService()
-        self.state_machine = DetectionStateMachine()
+        persistence_s = float(thresholds_loader.get("detection.persistence_s", 10))
+        recovery_s = float(thresholds_loader.get("detection.recovery_s", 5))
+        interval_s = self.detector_manager.sample_interval_seconds
+        self.state_machine = DetectionStateMachine(
+            persistence_samples=max(1, math.ceil(persistence_s / interval_s)),
+            recovery_samples=max(1, math.ceil(recovery_s / interval_s)),
+        )
         self.plausibility_guard = PlausibilityGuard()
         self.alarm_onset_ts = None
         #: When each channel first crossed its own threshold during the CURRENT

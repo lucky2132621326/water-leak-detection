@@ -26,6 +26,29 @@
 #define MQTT_PORT       1883
 #define DEVICE_ID       "esp32-rig-01"
 
+// Current bring-up hardware: 3x flow + MPU6050. Leave INA219 disabled until
+// its intermittent I2C connection is repaired and bench-validated; otherwise
+// a successful ACK at boot can turn later bus errors into plausible-looking
+// zero/incorrect readings.
+#define ENABLE_INA219   0
+
+// ACS712 analogue current channel, on VP (GPIO36, ADC1_CH0, input-only). The
+// piezo disc is now separately fitted on GPIO33, so the two no longer share a
+// pin. These defaults are for an ACS712-5A module (185 mV/A) powered from a
+// dedicated 5V LM2596, whose OUT signal passes through a 10k/20k divider
+// before reaching the ESP32 (ADC sees 2/3 of sensor OUT).
+// Change sensitivity to 100.0f for ACS712-20A or 66.0f for ACS712-30A.
+// NEVER connect a 5V-powered ACS712 OUT directly to the ESP32 without this
+// divider: the module can exceed the ESP32's absolute input rating. GND must
+// be common between the LM2596/ACS712 and the ESP32.
+#define ENABLE_ACS712                  1
+#define PIN_ACS712                     36
+#define ACS712_SENSITIVITY_MV_PER_A    185.0f
+#define ACS712_ADC_DIVIDER_RATIO       (2.0f / 3.0f)
+#define ACS712_ZERO_SAMPLES            512
+#define ACS712_READ_SAMPLES            256
+#define ACS712_NOISE_FLOOR_MA          20.0f
+
 #define TOPIC_TELEMETRY "rig/telemetry"
 #define TOPIC_CMD       "rig/cmd"
 #define TOPIC_STATUS    "rig/status"      // retained, with Last Will
@@ -66,7 +89,7 @@
 // is running, so it is detached after every move.
 #define SERVO_SETTLE_MS    15000
 
-#define PIN_PIEZO        33    // ADC1 — safe to read while WiFi is active
+#define PIN_PIEZO        33    // ADC1 — separate from ACS712 (VP), safe to read while WiFi is active
 #define PIN_DS18B20      4     // 1-Wire; will NOT enumerate without a 4.7k pull-up to 3V3
 
 // --- Flow calibration --------------------------------------------------------
@@ -104,6 +127,9 @@
 // re-enable, so an unattended rig cannot run itself dry overnight.
 #define PUMP_MAX_RUNTIME_MS    3600000UL
 
-#define TELEMETRY_INTERVAL_MS  1000
+// Publish once per second. Going faster is not useful on this profile: the
+// 512-sample MPU6050 burst itself spans about 1.024 seconds, and a shorter flow
+// counting window would further reduce YF-S201 pulse resolution.
+#define TELEMETRY_INTERVAL_MS  1000UL
 
 #endif  // CONFIG_H

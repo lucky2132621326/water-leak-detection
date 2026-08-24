@@ -20,7 +20,11 @@ export interface SystemStatus {
  * says plainly when something is down.
  */
 export const SystemStatusRow: React.FC<{ status?: SystemStatus | null }> = ({ status }) => {
-  const unknown = !status;
+  // A transient proxy error (502 during a backend restart, for example) can
+  // return a body that parses as JSON but isn't a real status payload — guard
+  // on the actual sub-objects, not just `status` being truthy, so a malformed
+  // response degrades to "unknown" instead of crashing the whole dashboard.
+  const unknown = !status || !status.rig || !status.mqtt || !status.mongodb || !status.pipeline;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -29,7 +33,7 @@ export const SystemStatusRow: React.FC<{ status?: SystemStatus | null }> = ({ st
         icon={<Cpu className="w-6 h-6" />}
         tone="blue"
         state={unknown ? "unknown" : status!.rig.online ? "ok" : status!.mode === "mock" ? "idle" : "down"}
-        value={unknown ? "—" : status!.rig.online ? "Online" : status!.mode === "mock" ? "Mock Data" : "Offline"}
+        value={unknown ? "—" : status!.rig.online ? "Online" : status!.mode === "mock" ? "Test Bench" : "Offline"}
         detail={unknown ? "status unavailable" : status!.rig.detail}
       />
 

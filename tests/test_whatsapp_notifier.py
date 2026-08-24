@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 from backend.alerts.alert_service import AlertService
 from backend.notifications.whatsapp import WhatsAppNotifier
@@ -10,7 +11,11 @@ class ImmediateExecutor:
 
 
 def alert(alert_id="LEAK-0001", source="live"):
-    return {"alert_id": alert_id, "source": source, "zone": "Branch_A", "start_ts": 1_754_131_200}
+    return {
+        "alert_id": alert_id, "source": source, "zone": "Main_Trunk",
+        "start_ts": 1_754_885_358, "peak_leak_rate_lpm": 0.306,
+        "confidence_tier": "HIGH", "likelihood_score": 38.0,
+    }
 
 
 def response(ts=1_754_131_200):
@@ -30,7 +35,7 @@ def configured_notifier(transport, notify_mock=False):
     )
 
 
-def test_twilio_template_payload_uses_zone_and_event_time():
+def test_twilio_template_payload_uses_complete_incident_evidence():
     calls = []
     notifier = configured_notifier(lambda form: calls.append(form) or {"sid": "SM_test"})
     assert notifier.enqueue(alert()) is True
@@ -38,8 +43,39 @@ def test_twilio_template_payload_uses_zone_and_event_time():
     assert calls[0]["To"] == "whatsapp:+919999999999"
     assert calls[0]["ContentSid"] == "HX_test"
     variables = json.loads(calls[0]["ContentVariables"])
-    assert variables["1"] == "Branch_A"
-    assert "2025" in variables["2"]
+    assert variables == {
+        "1": "Main_Trunk",
+        "2": "0.306",
+        "3": "HIGH",
+        "4": "38.0",
+        "5": "2025-08-11 09:39:18 IST",
+        "6": "Inspect the pipeline and verify in the field.",
+    }
+
+
+def test_operator_preview_matches_the_approved_template_layout():
+    notifier = configured_notifier(lambda _form: {"sid": "SM_test"})
+    preview = notifier.format_preview(alert())
+    assert preview == (
+        "🚨 LEAK DETECTED\n"
+        "Location: Main_Trunk\n"
+        "Estimated leak rate: 0.306 L/min\n"
+        "Confidence: HIGH (38.0%)\n"
+        "Detected: 2025-08-11 09:39:18 IST\n"
+        "Action: Inspect the pipeline and verify in the field."
+    )
+
+
+def test_1970_device_timestamp_uses_current_ist_date():
+    notifier = configured_notifier(lambda _form: {"sid": "SM_test"})
+    bad_clock_alert = alert()
+    bad_clock_alert["start_ts"] = 1000
+
+    # 2026-08-12 06:32:38 UTC = 2026-08-12 12:02:38 IST.
+    with patch("backend.notifications.whatsapp.time.time", return_value=1_786_516_358):
+        variables = notifier.template_variables(bad_clock_alert)
+
+    assert variables["5"] == "2026-08-12 12:02:38 IST"
 
 
 def test_duplicate_alert_id_is_sent_only_once():

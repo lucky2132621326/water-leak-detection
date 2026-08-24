@@ -26,12 +26,12 @@ without duplicating or weakening the downstream pipeline.
 
 ## Live rig truth
 
-The rig has three flow meters, INA219 power sensing, MPU6050 acoustic/vibration
-features, an optional piezo, an optional DS18B20, two pumps, and a Branch A
-pinch servo. It has no pressure transducer, electronic leak valve, or air-bubble
-actuator. Leaks are opened manually using calibrated clamps and logged through
-Experiment Control. The dashboard must never imply that it can open a physical
-leak remotely.
+The current bring-up profile has three flow meters and one MPU6050
+acoustic/vibration sensor, sampled by the ESP32 and published every five
+seconds. INA219, piezo and DS18B20 readings are explicitly unavailable rather
+than replaced with zeroes. Missing channels are removed from fusion and the
+remaining weights are renormalised. The rig has no pressure transducer,
+electronic leak valve, or air-bubble actuator.
 
 Localization retains learned Branch B baseline shifts and Branch A servo
 isolation. The topology cannot distinguish a separate `Branch_C` output, so an

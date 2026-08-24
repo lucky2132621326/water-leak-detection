@@ -131,7 +131,7 @@ void MQTTHandler::publishTelemetry(double ts, bool clockSynced,
                                    float busV, float currentMA, float powerMW,
                                    const VibrationSample& vib,
                                    float waterC, bool tempPresent,
-                                   bool pump1, bool pump2, int servoDeg,
+                                   bool pump1, bool pump2, int servoDeg, bool acs712Present,
                                    uint32_t uptimeSec) {
     if (!client.connected()) return;
 
@@ -154,9 +154,13 @@ void MQTTHandler::publishTelemetry(double ts, bool clockSynced,
     flow["pulses_branch"] = pulsesBranch;
 
     JsonObject power = doc.createNestedObject("power");
-    power["bus_v"]      = busV;
-    power["current_ma"] = currentMA;
-    power["power_mw"]   = powerMW;
+    if (!isnan(busV))      power["bus_v"] = busV;
+    else                   power["bus_v"] = (char*)nullptr;
+    if (!isnan(currentMA)) power["current_ma"] = currentMA;
+    else                   power["current_ma"] = (char*)nullptr;
+    if (!isnan(powerMW))   power["power_mw"] = powerMW;
+    else                   power["power_mw"] = (char*)nullptr;
+    power["current_source"] = acs712Present ? "acs712" : (!isnan(currentMA) ? "ina219" : "unavailable");
 
     JsonObject v = doc.createNestedObject("vibration");
     if (vib.hasAccelerometer) {
@@ -193,6 +197,13 @@ void MQTTHandler::publishTelemetry(double ts, bool clockSynced,
     health["uptime_s"]  = uptimeSec;
     health["wifi_rssi"] = WiFi.RSSI();
     health["free_heap"] = ESP.getFreeHeap();
+    JsonObject sensors = health.createNestedObject("sensors");
+    sensors["flow_1"] = true;
+    sensors["flow_2"] = true;
+    sensors["flow_3"] = true;
+    sensors["mpu6050"] = vib.hasAccelerometer;
+    sensors["ina219"] = !acs712Present && !isnan(currentMA);
+    sensors["acs712"] = acs712Present;
 
     char buffer[1024];
     const size_t n = serializeJson(doc, buffer);

@@ -3,8 +3,8 @@ export interface TelemetrySample {
   q_in: number;
   q_out: number;
   q_branch: number;
-  current_ma: number;
-  bus_v: number;
+  current_ma: number | null;
+  bus_v: number | null;
   residual: number;
   /** Acoustic band energies. null when no MPU6050 / piezo is fitted — which is
    *  a different fact from zero, and must not be rendered as a reading. */
@@ -329,6 +329,7 @@ export interface ScenarioSummary {
   id: string;
   name: string;
   description: string;
+  scoreable: boolean;
   duration_sec: number;
   leak_count: number;
   fault_count: number;

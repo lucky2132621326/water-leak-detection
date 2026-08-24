@@ -19,6 +19,12 @@ topology:
   # Set true only if the branch is re-plumbed to exit the loop past its meter.
   subtract_branch: false
 
+telemetry:
+  # Both sources target 1 Hz. Detector persistence is converted from seconds to
+  # sample counts using these values.
+  mock_interval_seconds: 1
+  live_interval_seconds: 1
+
 calibration:
   # --- flow meter K-factors, pulses per litre -------------------------------
   # YF-S201 nominal is ~450, but per-unit variation is significant and each
@@ -73,8 +79,8 @@ clamp_calibration:
 mass_balance:
   # Threshold is k * sigma, with sigma from the calibration block above.
   sigma_threshold: 3.0
-  # Consecutive alarming SAMPLES required before this detector reports. At the
-  # rig's 1 Hz publish rate samples and seconds coincide.
+  # Wall-clock duration required before this detector reports. DetectorManager
+  # converts it to the correct number of samples for the active mode.
   persistence_seconds: 5
   zero_flow_tolerance: 0.05
 

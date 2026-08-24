@@ -97,7 +97,7 @@ export const Header: React.FC<HeaderProps> = ({
         {onToggleMode && !readOnly && (
           <button
             onClick={onToggleMode}
-            title="Switch telemetry source: generated mock data or the live ESP32 rig"
+            title="Switch telemetry source: test bench (generated) data or the live ESP32 rig"
             className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition flex items-center space-x-2 ${
               mode === "live"
                 ? "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100"
@@ -105,7 +105,7 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <span className={`w-2 h-2 rounded-full ${mode === "live" ? "bg-rose-500 animate-pulse" : "bg-indigo-500"}`} />
-            <span>{mode === "live" ? "LIVE SENSORS" : "MOCK DATA"}</span>
+            <span>{mode === "live" ? "LIVE SENSORS" : "TEST BENCH"}</span>
           </button>
         )}
 

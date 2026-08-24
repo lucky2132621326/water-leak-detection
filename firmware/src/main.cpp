@@ -2,7 +2,7 @@
 // Jal Netra — ESP32 sensor node
 //
 // Publishes the nested telemetry contract in docs/MQTT_SPEC.md (spec Part G) at
-// 1 Hz, and accepts pump/servo commands on rig/cmd.
+// approximately 1-second intervals, and accepts pump/servo commands on rig/cmd.
 //
 // This node MEASURES and REPORTS. It makes no detection decisions — every
 // threshold and verdict lives in the Python backend. The one exception is the
@@ -21,6 +21,7 @@
 #include <ESP32Servo.h>
 
 #include "config.h"
+#include "acs712.h"
 #include "mqtt_client.h"
 #include "vibration_sensor.h"
 
@@ -36,6 +37,7 @@ void IRAM_ATTR isrFlowOut()    { pulsesOut++;    totalOut++; }
 void IRAM_ATTR isrFlowBranch() { pulsesBranch++; totalBranch++; }
 
 Adafruit_INA219 ina219;
+ACS712Sensor acs712;
 OneWire oneWire(PIN_DS18B20);
 DallasTemperature tempSensor(&oneWire);
 VibrationSensor vibration;
@@ -43,6 +45,8 @@ MQTTHandler mqtt;
 Servo branchValve;
 
 bool tempPresent = false;
+bool ina219Present = false;
+bool acs712Present = false;
 bool pump1On = false, pump2On = false;
 int  servoDeg = SERVO_OPEN_DEG;
 
@@ -160,7 +164,25 @@ void setup() {
         delay(1000);
     }
 
-    if (!ina219.begin()) Serial.println("[WARN] INA219 not found at 0x40");
+#if ENABLE_INA219
+    ina219Present = ina219.begin();
+    if (!ina219Present) {
+        // The current hardware profile intentionally runs without INA219.
+        // Publish nulls rather than fake zeroes so the backend deactivates the
+        // current-signature detector and renormalises fusion honestly.
+        Serial.println("[WARN] INA219 not found at 0x40 - power channel unavailable");
+    }
+#else
+    ina219Present = false;
+    Serial.println("[INFO] INA219 disabled in current 3-flow + MPU6050 profile");
+#endif
+    acs712Present = acs712.begin();
+    if (acs712Present) {
+        Serial.printf("[OK] ACS712 ready on GPIO %d; zero=%.1f mV (pump must be OFF during boot)\n",
+                      PIN_ACS712, acs712.zeroPointMV());
+    } else {
+        Serial.println("[WARN] ACS712 zero voltage invalid; current channel unavailable");
+    }
     if (!vibration.begin()) {
         // Not fatal. The backend marks the acoustic channel inactive and
         // renormalises the fusion weights, so flow and current detection are
@@ -222,9 +244,12 @@ void loop() {
     const float qOut    = toLpm(pOut, K2_PULSES_PER_LITRE, elapsed);
     const float qBranch = toLpm(pBranch, K3_PULSES_PER_LITRE, elapsed);
 
-    const float busV      = ina219.getBusVoltage_V();
-    const float currentMA = ina219.getCurrent_mA();
-    const float powerMW   = ina219.getPower_mW();
+    const float busV      = ina219Present ? ina219.getBusVoltage_V() : NAN;
+    const float currentMA = ina219Present ? ina219.getCurrent_mA()
+                                          : (acs712Present ? acs712.readCurrentMA() : NAN);
+    // ACS712 measures current only. Do not manufacture voltage or power from a
+    // nominal value; those fields remain null unless INA219 is actually present.
+    const float powerMW   = ina219Present ? ina219.getPower_mW() : NAN;
 
     const VibrationSample vib = vibration.read();
 
@@ -242,13 +267,16 @@ void loop() {
     // rather than a misleading 0.0, so no special-casing is needed here.
     Serial.printf(
         "[TELEMETRY] Qin=%.3f Qout=%.3f Qbr=%.3f L/min | pulses(in/out/br)=%lu/%lu/%lu | "
-        "V=%.2fV I=%.1fmA P=%.1fmW | water=%.1fC | vib=%s rms=%.4f | pump1=%d pump2=%d servo=%d\n",
+        "V=%.2fV I=%.1fmA P=%.1fmW | water=%.1fC | vib=%s rms=%.4f | piezo=%s rms=%.4f centroid=%.1fHz | "
+        "pump1=%d pump2=%d servo=%d\n",
         qIn, qOut, qBranch,
         (unsigned long)pIn, (unsigned long)pOut, (unsigned long)pBranch,
         busV, currentMA, powerMW,
         waterC,
         vib.hasAccelerometer ? "present" : "NOT-FOUND",
         vib.rms,
+        vib.hasPiezo ? "present" : "NOT-FOUND",
+        vib.piezoRms, vib.piezoCentroid,
         pump1On, pump2On, servoDeg);
 
     // Publish a real epoch when NTP has synced, and NOTHING otherwise.
@@ -267,6 +295,6 @@ void loop() {
         qIn, qOut, qBranch, tIn, tOut, tBranch,
         busV, currentMA, powerMW,
         vib, waterC, tempPresent,
-        pump1On, pump2On, servoDeg,
+        pump1On, pump2On, servoDeg, acs712Present,
         now / 1000);
 }

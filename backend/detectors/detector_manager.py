@@ -27,6 +27,8 @@ flow-independent ones.
 independent of each other, though both are independent of the flow meters. They
 are weighted accordingly rather than treated as two votes.
 """
+import math
+
 from backend.config.config_loader import thresholds_loader
 from backend.detectors.acoustic_detector import AcousticDetector
 from backend.detectors.acoustic_ml_detector import AcousticMLDetector
@@ -56,10 +58,17 @@ def methods_for_mode(mode: str = None):
 class DetectorManager:
     def __init__(self, mode: str = None):
         self.mode = mode or get_active_mode()
+        interval_key = "mock_interval_seconds" if self.mode == MODE_MOCK else "live_interval_seconds"
+        self.sample_interval_seconds = float(
+            thresholds_loader.get(f"telemetry.{interval_key}", 1 if self.mode == MODE_MOCK else 5)
+        )
+        mass_balance_seconds = float(
+            thresholds_loader.get("mass_balance.persistence_seconds", 5)
+        )
 
         self.mass_balance_detector = MassBalanceDetector(
             sigma_threshold=thresholds_loader.get("mass_balance.sigma_threshold", 3.0),
-            persistence_count=thresholds_loader.get("mass_balance.persistence_seconds", 5),
+            persistence_count=max(1, math.ceil(mass_balance_seconds / self.sample_interval_seconds)),
             apply_bias=True,
         )
         self.current_detector = CurrentSignatureDetector(
@@ -126,4 +135,5 @@ class DetectorManager:
             "channel_count": len(self.methods()),
             "acoustic_ml": self.acoustic_ml_detector.describe(),
             "pressure_is_simulated": self.pressure_detector is not None,
+            "sample_interval_seconds": self.sample_interval_seconds,
         }

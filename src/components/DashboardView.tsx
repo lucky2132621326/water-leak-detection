@@ -62,7 +62,9 @@ const PumpGraphic = ({ label, isOn }: { label: string; isOn: boolean }) => (
 );
 
 // Custom 4-Port Flow Meter Valve Graphic matching screenshot
-const FlowMeterGraphic = ({ name, code, value }: { name: string; code: string; value: string }) => (
+const FlowMeterGraphic = ({ name, code, value, flowing }: {
+  name: string; code: string; value: string; flowing: boolean | null;
+}) => (
   <div className="flex flex-col items-center shrink-0">
     <span className="text-[11px] font-bold text-slate-800">{name}</span>
     <span className="text-[11px] font-semibold text-slate-600">{code}</span>
@@ -86,15 +88,25 @@ const FlowMeterGraphic = ({ name, code, value }: { name: string; code: string; v
       </svg>
     </div>
     <span className="text-xs font-bold text-blue-600 font-mono">{value}</span>
+    <span className={`mt-1 text-[9px] font-extrabold uppercase tracking-wider ${
+      flowing === null ? "text-slate-400" : flowing ? "text-emerald-600" : "text-slate-500"
+    }`}>
+      {flowing === null ? "waiting" : flowing ? "flowing" : "no flow"}
+    </span>
   </div>
 );
 
 // Green Branch Valve / Tap Graphic matching screenshot
-const GreenBranchValveGraphic = ({ value }: { value: string }) => (
+const GreenBranchValveGraphic = ({ value, flowing }: { value: string; flowing: boolean | null }) => (
   <div className="flex flex-col items-center">
     <span className="text-[11px] font-bold text-slate-800">Branch Flow</span>
     <span className="text-[11px] font-semibold text-slate-600">Qbranch</span>
     <span className="text-xs font-bold text-blue-600 font-mono my-0.5">{value}</span>
+    <span className={`text-[9px] font-extrabold uppercase ${
+      flowing === null ? "text-slate-400" : flowing ? "text-emerald-600" : "text-slate-500"
+    }`}>
+      {flowing === null ? "waiting" : flowing ? "flowing" : "no flow"}
+    </span>
     <div className="w-8 h-8 flex items-center justify-center">
       <svg className="w-8 h-8" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M16 6V20" stroke="#10B981" strokeWidth="2.5" strokeLinecap="round"/>
@@ -148,15 +160,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // the status row reports the fault — previously they fell back to invented
   // numbers (12.45 / 11.08 / 1.42 A), so a dead backend looked like a live rig.
   const hasTelemetry = Boolean(latestTelemetry?.latest);
+  const waterFlow = latestTelemetry?.water_flow;
+  const hasFlowSample = waterFlow?.has_sample ?? hasTelemetry;
+  const flowStatus = waterFlow?.status ?? (hasFlowSample ? "no_flow" : "waiting");
   const qIn = latestTelemetry?.latest?.q_in ?? 0;
   const qOut = latestTelemetry?.latest?.q_out ?? 0;
   const qBranch = latestTelemetry?.latest?.q_branch ?? 0;
+  const qInDisplay = waterFlow?.sensors?.flow_1?.rate_lpm ?? qIn;
+  const qOutDisplay = waterFlow?.sensors?.flow_2?.rate_lpm ?? qOut;
+  const qBranchDisplay = waterFlow?.sensors?.flow_3?.rate_lpm ?? qBranch;
+  const anyHeld = ["flow_1", "flow_2", "flow_3"].some(
+    (key) => Boolean(waterFlow?.sensors?.[key]?.held)
+  );
   const residual = Number((qIn - (qOut + qBranch)).toFixed(2));
   const residualPercent = qIn > 0 ? Number(((residual / qIn) * 100).toFixed(2)) : 0;
   const currentAmp = Number(((latestTelemetry?.latest?.current_ma ?? 0) / 1000).toFixed(2));
   const voltage = latestTelemetry?.latest?.bus_v ?? latestTelemetry?.latest?.voltage_v ?? 0;
   const isLeak = latestTelemetry?.leak_active ?? false;
   const isPumpOn = latestTelemetry?.pump_on ?? false;
+  const isPump2On = latestTelemetry?.latest?.pump2_on ?? false;
+  const sensorFlowing = (key: "flow_1" | "flow_2" | "flow_3"): boolean | null =>
+    hasFlowSample ? Boolean(waterFlow?.sensors?.[key]?.flowing) : null;
+  const displayFlow = (value: number) => hasFlowSample ? `${Number(value).toFixed(3)} L/min` : "— L/min";
+
+  const flowBanner = flowStatus === "flowing"
+    ? { title: "Water flow detected", detail: anyHeld ? "Holding the last non-zero reading for up to 10 seconds while awaiting confirmation." : "The backend sees movement through at least one flow sensor.", style: "bg-emerald-50 border-emerald-200 text-emerald-800", dot: "bg-emerald-500 animate-pulse" }
+    : flowStatus === "no_flow"
+      ? { title: "Sensors online · no water flow", detail: "Fresh flow packets are arriving; all three sensors report exactly 0 L/min.", style: "bg-blue-50 border-blue-200 text-blue-800", dot: "bg-blue-500" }
+      : flowStatus === "stale"
+        ? { title: "Flow stream paused", detail: "Displaying the last received sensor values; current flow state is unknown.", style: "bg-amber-50 border-amber-200 text-amber-800", dot: "bg-amber-500" }
+        : { title: "Waiting for flow sensors", detail: "System Overview is ready and checks the backend every second.", style: "bg-slate-50 border-slate-200 text-slate-700", dot: "bg-slate-400 animate-pulse" };
 
   // Full history window the API already serves (120 samples ≈ 2 min at 1 Hz).
   // This previously took only the last 12 while the heading claimed 10 minutes.
@@ -195,6 +228,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </button>
             </div>
 
+            <div
+              data-testid="water-flow-state"
+              data-flow-status={flowStatus}
+              className={`mb-3 rounded-xl border px-4 py-3 flex flex-wrap items-center justify-between gap-2 ${flowBanner.style}`}
+            >
+              <div className="flex items-center gap-2.5">
+                <span className={`w-2.5 h-2.5 rounded-full ${flowBanner.dot}`} />
+                <div>
+                  <div className="text-xs font-extrabold uppercase tracking-wide">{flowBanner.title}</div>
+                  <div className="text-[11px] font-medium opacity-80">{flowBanner.detail}</div>
+                </div>
+              </div>
+              <div className="text-[10px] font-bold uppercase tracking-wider opacity-70">
+                {waterFlow?.sample_age_s != null ? `sample age ${Number(waterFlow.sample_age_s).toFixed(1)}s` : "awaiting first packet"}
+                {" · 1s polling"}
+              </div>
+            </div>
+
             {/* Visual Hydraulic Pipe Network Graphic */}
             <div className="relative py-8 px-4 bg-white rounded-2xl flex items-center justify-between my-2 overflow-x-auto min-h-[260px] select-none">
               {/* PUMP 1 */}
@@ -209,7 +260,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
 
               {/* Flow 1 */}
-              <FlowMeterGraphic name="Flow 1" code="Qin" value={`${qIn} L/min`} />
+              <FlowMeterGraphic name="Flow 1" code="Qin" value={displayFlow(qInDisplay)} flowing={sensorFlowing("flow_1")} />
 
               {/* Middle Pipe Junction with Branch Flow & Servo Valve */}
               <div className="relative flex-1 max-w-[220px] h-32 flex items-center justify-center mx-2 shrink-0">
@@ -228,7 +279,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                 {/* Top Label: Branch Flow */}
                 <div className="absolute -top-7 left-1/2 -translate-x-1/2 z-10">
-                  <GreenBranchValveGraphic value={`${qBranch} L/min`} />
+                  <GreenBranchValveGraphic value={displayFlow(qBranchDisplay)} flowing={sensorFlowing("flow_3")} />
                 </div>
 
                 {/* Bottom Label: SERVO VALVE */}
@@ -239,7 +290,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
 
               {/* Flow 2 */}
-              <FlowMeterGraphic name="Flow 2" code="Qout" value={`${qOut} L/min`} />
+              <FlowMeterGraphic name="Flow 2" code="Qout" value={displayFlow(qOutDisplay)} flowing={sensorFlowing("flow_2")} />
 
               {/* Arrow -> */}
               <div className="flex items-center text-slate-400 font-bold px-1 shrink-0">
@@ -250,7 +301,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
 
               {/* PUMP 2 */}
-              <PumpGraphic label="PUMP 2" isOn={isPumpOn} />
+              <PumpGraphic label="PUMP 2" isOn={isPump2On} />
             </div>
           </div>
 
@@ -258,11 +309,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
             <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 flex items-center justify-between shadow-2xs">
               <span className="text-xs sm:text-sm font-bold text-slate-900">Current Residual (Qin - Qout)</span>
-              <span className="text-lg sm:text-xl font-extrabold text-red-600">{residual} L/min</span>
+              <span className="text-lg sm:text-xl font-extrabold text-red-600">{hasFlowSample ? `${residual} L/min` : "—"}</span>
             </div>
             <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 flex items-center justify-between shadow-2xs">
               <span className="text-xs sm:text-sm font-bold text-slate-900">Residual %</span>
-              <span className="text-lg sm:text-xl font-extrabold text-red-600">{residualPercent.toFixed(2)}%</span>
+              <span className="text-lg sm:text-xl font-extrabold text-red-600">{hasFlowSample ? `${residualPercent.toFixed(2)}%` : "—"}</span>
             </div>
           </div>
         </div>
@@ -285,7 +336,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="flex items-center justify-between">
                 <div className="min-w-0">
                   <div className="text-[11px] text-slate-400 font-medium">
-                    {latestTelemetry?.mode === "live" ? "Live Sensors" : "Mock Data"}
+                    {latestTelemetry?.mode === "live" ? "Live Sensors" : "Test Bench"}
                   </div>
                   <div className="text-sm font-extrabold text-slate-900 font-mono truncate">
                     {latestTelemetry?.mode === "live" ? "ESP32 Rig" : (scenarioName ?? "Mock Generator")}
@@ -416,7 +467,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <Scale className="w-4 h-4 text-blue-500" />
                 <span className="font-medium">Qin (Flow 1)</span>
               </div>
-              <span className="font-bold text-blue-600 text-sm">{qIn} L/min</span>
+              <span className="font-bold text-blue-600 text-sm">{displayFlow(qInDisplay)}</span>
             </div>
 
             <div className="flex items-center justify-between pt-2.5">
@@ -424,7 +475,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <Gauge className="w-4 h-4 text-emerald-500" />
                 <span className="font-medium">Qout (Flow 2)</span>
               </div>
-              <span className="font-bold text-blue-600 text-sm">{qOut} L/min</span>
+              <span className="font-bold text-blue-600 text-sm">{displayFlow(qOutDisplay)}</span>
             </div>
 
             <div className="flex items-center justify-between pt-2.5">
@@ -432,7 +483,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <Droplet className="w-4 h-4 text-indigo-500" />
                 <span className="font-medium">Qbranch (Flow 3)</span>
               </div>
-              <span className="font-bold text-blue-600 text-sm">{qBranch} L/min</span>
+              <span className="font-bold text-blue-600 text-sm">{displayFlow(qBranchDisplay)}</span>
             </div>
 
             <div className="flex items-center justify-between pt-2.5">
