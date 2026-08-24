@@ -70,6 +70,8 @@ class AlertService:
             notifier = get_whatsapp_notifier()
         self.notifier = notifier
         self.merge_gap_sec = float(impact_loader.get("alerts.merge_gap_sec", 30))
+        self.mock_auto_resolve_sec = float(impact_loader.get("alerts.mock_auto_resolve_sec", 30))
+        self.mock_max_alerts_per_run = int(impact_loader.get("alerts.mock_max_alerts_per_run", 1))
         self.prevented_horizon_days = float(impact_loader.get("savings.prevented_horizon_days", 30))
         self._load_from_db()
 
@@ -129,6 +131,7 @@ class AlertService:
         in_alarm = bool(response.get("is_alarm"))
 
         with self._lock:
+            self._auto_resolve_due()
             open_alert = self._find_open(source, run_id)
 
             if not in_alarm:
@@ -161,7 +164,48 @@ class AlertService:
                 existing["is_open"] = True
                 return self._update(existing, response, ts, rate)
 
+            # Scripted mock scenarios can loop or be selected repeatedly. Keep
+            # one durable incident per run instead of producing a new alert
+            # whenever detector state briefly falls outside the merge window.
+            # Manual Control uses wall-clock events and must still permit a
+            # genuinely new operator-created leak after the previous one ends.
+            if source == MODE_MOCK and run_id and run_id != "MOCK_manual_control" \
+                    and self.mock_max_alerts_per_run > 0:
+                same_run = [
+                    alert for alert in self._alerts
+                    if alert.get("source") == source and alert.get("run_id") == run_id
+                ]
+                if len(same_run) >= self.mock_max_alerts_per_run:
+                    existing = same_run[-1]
+                    existing["is_open"] = True
+                    return self._update(existing, response, ts, rate)
+
             return self._create(response, ts, rate, source, run_id)
+
+    def _auto_resolve_due(self, now: float = None) -> list[str]:
+        """Resolve unattended mock incidents after the configured demo delay.
+
+        Called from ingestion, so it needs no timer thread and cannot affect a
+        stopped service. Live-mode instances never auto-disposition incidents.
+        """
+        if self.mode != MODE_MOCK or self.mock_auto_resolve_sec <= 0:
+            return []
+        now = time.time() if now is None else float(now)
+        due = [
+            alert for alert in self._alerts
+            if alert.get("status") == "ACTIVE"
+            and now - float(alert.get("created_at") or now) >= self.mock_auto_resolve_sec
+        ]
+        resolved = []
+        for alert in due:
+            self.resolve(
+                alert["alert_id"],
+                note="Automatically resolved after the mock demonstration timeout.",
+            )
+            alert["auto_resolved"] = True
+            self._persist(alert)
+            resolved.append(alert["alert_id"])
+        return resolved
 
     def _find_open(self, source, run_id):
         for a in reversed(self._alerts):
@@ -222,7 +266,12 @@ class AlertService:
         self._persist(alert)
         logger.info(f"[AlertService] Raised {alert['alert_id']} in {alert['zone']} at {rate:.2f} L/min")
         try:
-            self.notifier.enqueue(alert)
+            # The automatic mock playlist is an unattended dashboard demo. It
+            # must populate Alert Center without paging WhatsApp recipients for
+            # every scenario. Manual mock testing retains its explicit notifier
+            # configuration, and Live Mode is unchanged.
+            if not (source == MODE_MOCK and str(run_id or "").startswith("AUTO_")):
+                self.notifier.enqueue(alert)
         except Exception as exc:
             logger.warning(f"[AlertService] Could not queue WhatsApp notification: {exc}")
         return alert

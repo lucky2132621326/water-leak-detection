@@ -77,6 +77,18 @@ class TestIngestion(AlertServiceTestCase):
             one_pass()
         self.assertEqual(self.svc.counts()["total"], 1)
 
+    def test_scripted_mock_run_is_capped_at_one_alert(self):
+        self.svc.ingest(make_response(100), source="mock", run_id="AUTO_large_leak")
+        self.svc.ingest(make_response(101, is_alarm=False), source="mock", run_id="AUTO_large_leak")
+        self.svc.ingest(make_response(10_000), source="mock", run_id="AUTO_large_leak")
+        self.assertEqual(self.svc.counts()["total"], 1)
+
+    def test_manual_control_can_create_distinct_alerts(self):
+        self.svc.ingest(make_response(100), source="mock", run_id="MOCK_manual_control")
+        self.svc.ingest(make_response(101, is_alarm=False), source="mock", run_id="MOCK_manual_control")
+        self.svc.ingest(make_response(10_000), source="mock", run_id="MOCK_manual_control")
+        self.assertEqual(self.svc.counts()["total"], 2)
+
     def test_peak_rate_is_retained_not_last_value(self):
         self.svc.ingest(make_response(100, residual=0.4))
         self.svc.ingest(make_response(101, residual=2.0))
@@ -174,6 +186,15 @@ class TestLifecycle(AlertServiceTestCase):
             self.svc.ingest(make_response(ts, residual=1.0), source="live")
         self.assertEqual(self.svc.get(self.alert_id)["status"], "RESOLVED")
         self.assertEqual(self.svc.counts()["total"], 1)
+
+    def test_mock_alert_auto_resolves_after_demo_timeout(self):
+        svc = AlertService(enable_persistence=False, mode="mock")
+        svc.mock_auto_resolve_sec = 10
+        alert = svc.ingest(make_response(100), source="mock", run_id="AUTO_small_leak")
+        svc._auto_resolve_due(now=alert["created_at"] + 11)
+        resolved = svc.get(alert["alert_id"])
+        self.assertEqual(resolved["status"], "RESOLVED")
+        self.assertTrue(resolved["auto_resolved"])
 
 
 class TestMockExclusion(AlertServiceTestCase):
