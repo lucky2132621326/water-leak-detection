@@ -48,3 +48,8 @@ alerts:
   # Consecutive alarm samples closer together than this are merged into one
   # incident, so a flickering detector produces one alert rather than hundreds.
   merge_gap_sec: 30
+  # Demo-only lifecycle controls. Only unattended AUTO_ incidents resolve
+  # automatically; manually selected/injected mock incidents remain active
+  # until the operator repairs them. Scripted runs are capped to prevent spam.
+  mock_auto_resolve_sec: 30
+  mock_max_alerts_per_run: 1

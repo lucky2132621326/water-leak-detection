@@ -81,6 +81,13 @@ _ingestor = TelemetryIngestor(source_name=MODE_MOCK)
 _live_source = MqttTelemetrySource()
 _mock_source = None
 _mode_lock = threading.RLock()
+_mock_playlist_stop = threading.Event()
+_mock_playlist_thread = None
+
+# Leak-bearing scenarios only: healthy/fault-only cases add useful benchmark
+# coverage but should not occupy the automatic Alert Center demonstration.
+_MOCK_PLAYLIST_SPEED = 12.0
+_MOCK_PLAYLIST_GAP_SEC = 4.0
 
 # Built lazily so importing this module never requires MongoDB to be reachable.
 _impact_singleton = None
@@ -109,7 +116,19 @@ def _stop_all_sources():
     _live_source.stop()
 
 
-def _switch_mode(mode: str, scenario_id: str = None, speed: float = 4.0, loop: bool = True):
+def _stop_mock_playlist():
+    global _mock_playlist_thread
+    _mock_playlist_stop.set()
+    thread = _mock_playlist_thread
+    if thread and thread is not threading.current_thread() and thread.is_alive():
+        thread.join(timeout=3)
+    if thread is not threading.current_thread():
+        _mock_playlist_thread = None
+
+
+def _switch_mode(mode: str, scenario_id: str = None, speed: float = 4.0,
+                 loop: bool = True, from_playlist: bool = False,
+                 run_id: str = None):
     """Change operating mode.
 
     Detector state is reset on every switch. Every detector is stateful — the
@@ -120,6 +139,8 @@ def _switch_mode(mode: str, scenario_id: str = None, speed: float = 4.0, loop: b
     """
     global _mode, _mock_source, _ingestor
 
+    if not from_playlist:
+        _stop_mock_playlist()
     with _mode_lock:
         _stop_all_sources()
         _mode = mode
@@ -143,19 +164,62 @@ def _switch_mode(mode: str, scenario_id: str = None, speed: float = 4.0, loop: b
         interactive = scenario.id == "manual_control"
         _mock_source = MockTelemetrySource(
             scenario, speed=speed, loop=loop,
-            run_id=f"MOCK_{scenario.id}",
+            run_id=run_id or f"MOCK_{scenario.id}",
             realtime=interactive,
             persist_ground_truth=not interactive)
         _mock_source.start(_ingestor)
         return {"success": True, "mode": mode, "source": _mock_source.describe()}
 
 
+def _mock_playlist_worker():
+    scenarios = [
+        summary for summary in list_scenarios()
+        if summary.get("expect_detection") and summary.get("leak_count", 0) > 0
+    ]
+    while scenarios and not _mock_playlist_stop.is_set():
+        for summary in scenarios:
+            if _mock_playlist_stop.is_set():
+                return
+            scenario = get_scenario(summary["id"])
+            result = _switch_mode(
+                MODE_MOCK,
+                scenario_id=scenario.id,
+                speed=_MOCK_PLAYLIST_SPEED,
+                loop=False,
+                from_playlist=True,
+                run_id=f"AUTO_{scenario.id}",
+            )
+            if not result.get("success"):
+                logger.warning(f"[MockPlaylist] Could not start {scenario.id}: {result}")
+                continue
+            logger.info(f"[MockPlaylist] Playing {scenario.id}")
+            play_seconds = scenario.duration_sec / _MOCK_PLAYLIST_SPEED
+            if _mock_playlist_stop.wait(play_seconds + _MOCK_PLAYLIST_GAP_SEC):
+                return
+
+
+def _start_mock_playlist():
+    global _mock_playlist_thread, _mock_playlist_stop
+    _stop_mock_playlist()
+    _mock_playlist_stop = threading.Event()
+    _mock_playlist_thread = threading.Thread(
+        target=_mock_playlist_worker,
+        daemon=True,
+        name="mock-scenario-playlist",
+    )
+    _mock_playlist_thread.start()
+
+
 @app.on_event("startup")
 def on_startup():
-    """Boot into Mock Data Mode so the dashboard is immediately useful. Live
-    mode is entered explicitly, which also avoids a startup stall when no
-    broker is present."""
+    """Boot into manual mock control; scenarios run only when selected."""
     _switch_mode(MODE_MOCK, scenario_id="manual_control", speed=1.0)
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    _stop_mock_playlist()
+    _stop_all_sources()
 
 
 class ModeRequest(BaseModel):
