@@ -1,5 +1,5 @@
 import React from "react";
-import { Cpu, Wifi, Database, Activity, AlertTriangle } from "lucide-react";
+import { Cpu, Activity, AlertTriangle } from "lucide-react";
 
 export interface SystemStatus {
   mode: "live" | "mock";
@@ -51,7 +51,7 @@ export const SystemStatusRow: React.FC<{ status?: SystemStatus | null }> = ({ st
           </div>
         </div>
       )}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
       <StatusCard
         title="ESP32 Rig"
         icon={<Cpu className="w-6 h-6" />}
@@ -59,30 +59,6 @@ export const SystemStatusRow: React.FC<{ status?: SystemStatus | null }> = ({ st
         state={unknown ? "unknown" : status!.rig.online ? "ok" : status!.mode === "mock" ? "idle" : "down"}
         value={unknown ? "—" : status!.rig.online ? "Online" : status!.mode === "mock" ? "Test Bench" : "Offline"}
         detail={unknown ? "status unavailable" : status!.rig.detail}
-      />
-
-      <StatusCard
-        title="MQTT Broker"
-        icon={<Wifi className="w-6 h-6" />}
-        tone="purple"
-        state={unknown ? "unknown" : status!.mqtt.connected ? "ok" : status!.mode === "mock" ? "idle" : "down"}
-        value={unknown ? "—" : status!.mqtt.connected ? "Connected" : "Not Connected"}
-        detail={unknown ? "status unavailable" : status!.mqtt.detail}
-      />
-
-      <StatusCard
-        title="MongoDB"
-        icon={<Database className="w-6 h-6" />}
-        tone="emerald"
-        state={unknown ? "unknown" : status!.mongodb.connected ? "ok" : "down"}
-        value={unknown ? "—" : status!.mongodb.connected ? "Connected" : "Unreachable"}
-        detail={
-          unknown
-            ? "status unavailable"
-            : status!.mongodb.connected && status!.mongodb.telemetry_records !== null
-              ? `${status!.mongodb.telemetry_records.toLocaleString()} telemetry records`
-              : status!.mongodb.detail
-        }
       />
 
       <StatusCard
