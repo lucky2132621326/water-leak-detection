@@ -209,14 +209,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Full history window the API already serves (120 samples ≈ 2 min at 1 Hz).
   // This previously took only the last 12 while the heading claimed 10 minutes.
-  const chartData = telemetryHistory.slice(-120).map((sample) => ({
-    time: new Date(sample.ts * 1000).toLocaleTimeString("en-US", {
-      hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
-    }),
-    Qin: sample.q_in ?? 0,
-    Qout: sample.q_out ?? 0,
-    Residual: sample.residual ?? 0,
-  }));
+  const chartData = telemetryHistory
+    .filter((sample) => sample && typeof sample.ts === "number" && Number.isFinite(sample.ts))
+    .slice(-120)
+    .map((sample) => ({
+      time: new Date(sample.ts * 1000).toLocaleTimeString("en-US", {
+        hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+      }),
+      Qin: Number.isFinite(sample.q_in) ? Number(sample.q_in) : 0,
+      Qout: Number.isFinite(sample.q_out) ? Number(sample.q_out) : 0,
+      Residual: Number.isFinite(sample.residual) ? Number(sample.residual) : 0,
+    }));
+
+  const chartBounds = chartData.reduce((acc, point) => {
+    const values = [point.Qin, point.Qout, point.Residual];
+    const minValue = Math.min(...values, 0);
+    const maxValue = Math.max(...values, 1);
+    return {
+      min: Math.min(acc.min, minValue),
+      max: Math.max(acc.max, maxValue),
+    };
+  }, { min: 0, max: 1 });
+
+  const yMin = Number.isFinite(chartBounds.min) ? Math.min(0, chartBounds.min - 1) : 0;
+  const yMax = Number.isFinite(chartBounds.max) ? chartBounds.max + 1 : 16;
 
   const windowLabel = chartData.length > 1
     ? `Last ${Math.max(1, Math.round((telemetryHistory[telemetryHistory.length - 1].ts - telemetryHistory[Math.max(0, telemetryHistory.length - 120)].ts) / 60))} min · ${chartData.length} samples`
@@ -583,7 +599,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
                 <XAxis dataKey="time" stroke="#94A3B8" fontSize={11} tickLine={false} />
-                <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} domain={[0, 16]} />
+                <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} domain={[yMin, yMax]} />
                 <Tooltip 
                   contentStyle={{ backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: "12px", fontSize: "12px" }} 
                 />
