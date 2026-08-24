@@ -1,5 +1,5 @@
 import React from "react";
-import { Droplets, IndianRupee, ShieldAlert, TrendingUp, ArrowRight } from "lucide-react";
+import { ShieldAlert, TrendingUp, ArrowRight } from "lucide-react";
 import type { ImpactSummary, SavingsSummary } from "../types";
 import { formatLitres, formatMoney, formatRate, severityStyle, urgencyStyle } from "../lib/impact";
 
@@ -22,44 +22,7 @@ export const ImpactSummaryStrip: React.FC<Props> = ({ impact, savings, onAnalyze
   const hasLoss = rate > 0;
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
-      {/* Water loss */}
-      <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs">
-        <div className="flex items-start justify-between">
-          <div className="min-w-0">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Water Loss</h3>
-            <p className="text-2xl font-extrabold text-slate-900 mt-1 tracking-tight">
-              {formatLitres(impact?.litres_per_day, { compact: true })}
-              <span className="text-sm font-bold text-slate-400 ml-1">/day</span>
-            </p>
-            <p className="text-xs text-slate-500 font-medium mt-1">
-              {formatRate(rate)} · {formatLitres(impact?.litres_per_month, { compact: true })}/month
-            </p>
-          </div>
-          <div className="w-11 h-11 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0">
-            <Droplets className="w-5 h-5" />
-          </div>
-        </div>
-      </div>
-
-      {/* Cost */}
-      <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs">
-        <div className="flex items-start justify-between">
-          <div className="min-w-0">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Annual Cost</h3>
-            <p className={`text-2xl font-extrabold mt-1 tracking-tight ${hasLoss ? "text-rose-600" : "text-emerald-600"}`}>
-              {formatMoney(impact?.cost_per_year, symbol, { compact: true })}
-            </p>
-            <p className="text-xs text-slate-500 font-medium mt-1">
-              {formatMoney(impact?.cost_per_day, symbol)}/day · {formatMoney(impact?.cost_per_month, symbol, { compact: true })}/month
-            </p>
-          </div>
-          <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
-            <IndianRupee className="w-5 h-5" />
-          </div>
-        </div>
-      </div>
-
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
       {/* Severity */}
       <div className={`bg-white rounded-2xl p-5 border shadow-xs ${hasLoss ? sev.ring : "border-slate-200/80"}`}>
         <div className="flex items-start justify-between">
@@ -102,7 +65,7 @@ export const ImpactSummaryStrip: React.FC<Props> = ({ impact, savings, onAnalyze
       {onAnalyzeImpact && (
         <button
           onClick={onAnalyzeImpact}
-          className="sm:col-span-2 xl:col-span-4 group flex items-center justify-between bg-slate-900 hover:bg-slate-800 text-white rounded-2xl px-5 py-3.5 transition shadow-xs"
+          className="sm:col-span-2 group flex items-center justify-between bg-slate-900 hover:bg-slate-800 text-white rounded-2xl px-5 py-3.5 transition shadow-xs"
         >
           <span className="text-sm font-bold text-left">
             {hasLoss

@@ -1,8 +1,28 @@
 import "dotenv/config";
+import fs from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 
-const pythonCommand = process.env.PYTHON_COMMAND || "python";
+function resolvePythonCommand() {
+  const venvCandidates = process.platform === "win32"
+    ? [
+        path.resolve(".venv", "Scripts", "python.exe"),
+        path.resolve(".venv", "Scripts", "python"),
+      ]
+    : [
+        path.resolve(".venv", "bin", "python"),
+      ];
+
+  for (const candidate of venvCandidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "python";
+}
+
+const pythonCommand = process.env.PYTHON_COMMAND || resolvePythonCommand();
 const apiPort = process.env.API_PORT || "8001";
 const webPort = process.env.PORT || "3000";
 const childEnvironment = {

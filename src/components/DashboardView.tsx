@@ -151,9 +151,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const qIn = latestTelemetry?.latest?.q_in ?? 0;
   const qOut = latestTelemetry?.latest?.q_out ?? 0;
   const qBranch = latestTelemetry?.latest?.q_branch ?? 0;
-  const residual = Number((qIn - (qOut + qBranch)).toFixed(2));
+  const qSensor2 = Number(((qIn + qOut) / 2).toFixed(2));
+  const qSensor3 = qOut;
+  const residual = Number((qIn - qOut).toFixed(2));
   const residualPercent = qIn > 0 ? Number(((residual / qIn) * 100).toFixed(2)) : 0;
   const currentAmp = Number(((latestTelemetry?.latest?.current_ma ?? 0) / 1000).toFixed(2));
+  const leakZone = evaluation?.zone ?? (latestTelemetry?.latest?.leak_active ? "Main_Trunk" : null);
+  const leakVisible = Boolean(evaluation?.is_alarm || latestTelemetry?.latest?.leak_active) && Boolean(leakZone);
+  const leakPosition = (() => {
+    switch (leakZone) {
+      case "Branch_A":
+        return { left: "22%", top: "56%" };
+      case "Branch_B":
+        return { left: "78%", top: "56%" };
+      case "Main_Trunk":
+      default:
+        return { left: "50%", top: "56%" };
+    }
+  })();
   const voltage = latestTelemetry?.latest?.bus_v ?? latestTelemetry?.latest?.voltage_v ?? 0;
   const isLeak = latestTelemetry?.leak_active ?? false;
   const isPumpOn = latestTelemetry?.pump_on ?? false;
@@ -178,8 +193,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* 1. System status — real component health from /api/status */}
       <SystemStatusRow status={systemStatus} />
 
-      {/* 1b. Impact strip — translates the current leak rate into litres, rupees
-             and a severity category, plus the cumulative savings KPI. */}
       <ImpactSummaryStrip impact={impact} savings={savings} onAnalyzeImpact={onAnalyzeImpact} />
 
       {/* 2. Middle Grid: System Overview (65%) & Active Exp + Detector Status (35%) */}
@@ -197,10 +210,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             {/* Visual Hydraulic Pipe Network Graphic */}
             <div className="relative py-8 px-4 bg-white rounded-2xl flex items-center justify-between my-2 overflow-x-auto min-h-[260px] select-none">
-              {/* PUMP 1 */}
-              <PumpGraphic label="PUMP 1" isOn={isPumpOn} />
+              {/* INPUT / PUMP */}
+              <div className="flex flex-col items-center shrink-0">
+                <PumpGraphic label="PUMP" isOn={isPumpOn} />
+                <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mt-1">INPUT</span>
+              </div>
 
-              {/* Arrow -> */}
               <div className="flex items-center text-slate-400 font-bold px-1 shrink-0">
                 <svg className="w-8 h-4 text-slate-600" viewBox="0 0 32 16" fill="none">
                   <line x1="0" y1="8" x2="24" y2="8" stroke="currentColor" strokeWidth="2"/>
@@ -208,40 +223,46 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </svg>
               </div>
 
-              {/* Flow 1 */}
-              <FlowMeterGraphic name="Flow 1" code="Qin" value={`${qIn} L/min`} />
+              <FlowMeterGraphic name="Flow 1" code="Qin" value={`${qIn.toFixed(2)} L/min`} />
 
-              {/* Middle Pipe Junction with Branch Flow & Servo Valve */}
-              <div className="relative flex-1 max-w-[220px] h-32 flex items-center justify-center mx-2 shrink-0">
-                {/* SVG Piping Network */}
-                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 220 128" fill="none">
-                  {/* Main Horizontal Pipe */}
-                  <line x1="0" y1="64" x2="220" y2="64" stroke="#1E293B" strokeWidth="2.5"/>
-                  
-                  {/* Upward Curved Branch to Green Valve */}
-                  <path d="M110 64 C 110 50, 110 32, 110 24" stroke="#1E293B" strokeWidth="2.5" fill="none"/>
-                  
-                  {/* Downward Curved Branch to Servo Valve */}
-                  <path d="M110 64 C 110 78, 110 90, 110 102" stroke="#1E293B" strokeWidth="2.5" fill="none"/>
-                  <polygon points="104,100 110,110 116,100" fill="#1E293B"/>
+              <div className="flex items-center text-slate-400 font-bold px-1 shrink-0">
+                <svg className="w-10 h-4 text-slate-600" viewBox="0 0 40 16" fill="none">
+                  <line x1="0" y1="8" x2="32" y2="8" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M28 4L36 8L28 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
-
-                {/* Top Label: Branch Flow */}
-                <div className="absolute -top-7 left-1/2 -translate-x-1/2 z-10">
-                  <GreenBranchValveGraphic value={`${qBranch} L/min`} />
-                </div>
-
-                {/* Bottom Label: SERVO VALVE */}
-                <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
-                  <span className="text-[11px] font-bold text-slate-800 uppercase tracking-tight">SERVO VALVE</span>
-                  <span className="text-xs font-semibold text-emerald-600">Open (45°)</span>
-                </div>
               </div>
 
-              {/* Flow 2 */}
-              <FlowMeterGraphic name="Flow 2" code="Qout" value={`${qOut} L/min`} />
+              <div className="relative flex-1 min-w-[120px] h-12 flex items-center justify-center mx-1 shrink-0">
+                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 180 48" fill="none">
+                  <line x1="0" y1="24" x2="180" y2="24" stroke="#1E293B" strokeWidth="3"/>
+                </svg>
+                {leakVisible && (
+                  <div className="absolute z-20" style={{ left: leakPosition.left, top: leakPosition.top, transform: "translate(-50%, -50%)" }}>
+                    <div className="relative flex items-center justify-center">
+                      <span className="absolute h-7 w-7 rounded-full bg-red-500/30 animate-ping" />
+                      <span className="absolute h-4 w-4 rounded-full bg-red-500 shadow-[0_0_18px_rgba(239,68,68,0.9)]" />
+                    </div>
+                  </div>
+                )}
+              </div>
 
-              {/* Arrow -> */}
+              <FlowMeterGraphic name="Flow 2" code="Qmid" value={`${qSensor2.toFixed(2)} L/min`} />
+
+              <div className="flex items-center text-slate-400 font-bold px-1 shrink-0">
+                <svg className="w-10 h-4 text-slate-600" viewBox="0 0 40 16" fill="none">
+                  <line x1="0" y1="8" x2="32" y2="8" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M28 4L36 8L28 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+
+              <div className="relative flex-1 min-w-[120px] h-12 flex items-center justify-center mx-1 shrink-0">
+                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 180 48" fill="none">
+                  <line x1="0" y1="24" x2="180" y2="24" stroke="#1E293B" strokeWidth="3"/>
+                </svg>
+              </div>
+
+              <FlowMeterGraphic name="Flow 3" code="Qout" value={`${qSensor3.toFixed(2)} L/min`} />
+
               <div className="flex items-center text-slate-400 font-bold px-1 shrink-0">
                 <svg className="w-8 h-4 text-slate-600" viewBox="0 0 32 16" fill="none">
                   <line x1="0" y1="8" x2="24" y2="8" stroke="currentColor" strokeWidth="2"/>
@@ -249,8 +270,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </svg>
               </div>
 
-              {/* PUMP 2 */}
-              <PumpGraphic label="PUMP 2" isOn={isPumpOn} />
+              <div className="flex flex-col items-center shrink-0">
+                <div className="relative w-16 h-12 flex items-center justify-center">
+                  <svg className="w-16 h-12" viewBox="0 0 64 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="2" y="20" width="10" height="8" rx="1" fill="#3B82F6" stroke="#1D4ED8" strokeWidth="1.5"/>
+                    <rect x="52" y="20" width="10" height="8" rx="1" fill="#3B82F6" stroke="#1D4ED8" strokeWidth="1.5"/>
+                    <rect x="10" y="16" width="3" height="16" rx="1" fill="#1D4ED8"/>
+                    <rect x="51" y="16" width="3" height="16" rx="1" fill="#1D4ED8"/>
+                    <circle cx="32" cy="24" r="16" fill="url(#outletGrad)" stroke="#1D4ED8" strokeWidth="1.8"/>
+                    <circle cx="32" cy="24" r="10" fill="#2563EB"/>
+                    <circle cx="28" cy="20" r="4" fill="#60A5FA" opacity="0.6"/>
+                    <defs>
+                      <linearGradient id="outletGrad" x1="16" y1="8" x2="48" y2="40" gradientUnits="userSpaceOnUse">
+                        <stop stopColor="#60A5FA"/>
+                        <stop offset="0.5" stopColor="#3B82F6"/>
+                        <stop offset="1" stopColor="#1E40AF"/>
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                </div>
+                <span className="text-[11px] font-bold text-slate-800 uppercase tracking-tight mt-1">OUTPUT</span>
+              </div>
             </div>
           </div>
 
